@@ -121,9 +121,8 @@ reader of the file can satisfy is not a capstone. Release now compares against
 a caller-supplied authority using `hmac.compare_digest`, with no default: the
 constructor raises rather than fall back to a known value.
 
-**The HMAC key was hardcoded** as
-`b"GSA_ADAMANTIUM_CORE_STASIS_SIGNATURE_815"`. A published key authenticates
-nothing. The key is now a required argument, and the tower generates a random
+**The HMAC key was hardcoded** as a fixed string in the original source (not
+reproduced here). A published key authenticates nothing. The key is now a required argument, and the tower generates a random
 per-instance key when one is not supplied.
 
 **The ledger is described accurately.** It is tamper-evident, not
