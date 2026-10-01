@@ -1,9 +1,9 @@
 """Kinetic Governor: the temporal budget.
 
 What it is, plainly: a rate limiter that computes a per-payload delay from
-payload size, then enforces it. Calling it a "mechanical rev-limiter" does not
-change what it does, and the archived description of it as a defense against
-"API thermal runaway" oversells a sleep call. What it genuinely provides is
+payload size, then enforces it. Giving it a grander mechanical metaphor does
+not change what it does, and the earlier private description of it as a defense
+against overload oversells a sleep call. What it genuinely provides is
 predictable pacing in front of a metered API, which is a real operational
 concern and the reason it is kept.
 
@@ -12,17 +12,12 @@ it is worth being accurate about what it is: a pacing coefficient with no
 derivation recorded anywhere in the archive. It is a tuning knob. It is exposed
 as a constructor argument so it can be tuned.
 
-One correction against the archived build. That version had:
-
-    self.temporal_budget = 0.815
-    async def calculate_budget(self, payload_size):
-        await asyncio.sleep(self.temporal_budget)
-        return self.temporal_budget
-
-which ignores payload_size entirely and sleeps a flat 815ms on every call. A
-"budget computed from payload density" that does not read the payload is not a
-budget. This implementation computes the delay from token count, clamps it to a
-configured floor and ceiling, and returns the value it actually waited.
+One correction against the earlier private version. Its budget method took the
+payload size as an argument, ignored it entirely, slept a flat 815ms on every
+call, and returned that same constant. A budget described as computed from
+payload density that does not read the payload is not a budget. This
+implementation computes the delay from token count, clamps it to a configured
+floor and ceiling, and returns the value it actually waited.
 """
 
 from __future__ import annotations

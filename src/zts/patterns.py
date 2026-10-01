@@ -1,9 +1,9 @@
 """Centralized pre-compiled regex cache.
 
 Historical note: the archived ZTS builds all opened with a module-level dict of
-pre-compiled patterns, described in the source records as the
-"CENTRALIZED FAIL-FAST REGEX CACHE". Compiling once at import and reusing the
-compiled objects across every gate is what makes the syntactic gates cheap
+pre-compiled patterns, which the source records presented as a single shared
+cache of regexes for the fail-fast array. Compiling once at import and reusing
+the compiled objects across every gate is what makes the syntactic gates cheap
 enough to run ahead of the semantic ones.
 
 Every pattern below is reproduced from the archived v13.0 cache. Additions made

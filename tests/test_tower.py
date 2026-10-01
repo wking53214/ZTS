@@ -74,8 +74,8 @@ class TestCapstone:
         assert not tap.authorize("x").released
 
     def test_handshake_has_no_default_authority(self):
-        # The archived build accepted the literal "ADMIN_OVERRIDE", which is
-        # published in the source. A capstone with a known key is not a gate.
+        # The earlier private version accepted a fixed literal signature, which
+        # is published in the source. A capstone with a known key is not a gate.
         with pytest.raises(ValueError):
             ArchitectsProtocol(ReleaseMode.HANDSHAKE)
 
