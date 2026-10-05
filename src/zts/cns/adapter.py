@@ -100,6 +100,11 @@ class CNSDock:
         """Translate a CNS identity into the normalized ZTS artifact."""
         self.validate_contract()
 
+        if not isinstance(identity, self._cns):
+            raise CNSContractError(
+                "identity is not a canonical CNS IdentityContext"
+            )
+
         artifact = translate_identity(
             identity,
             cns_contract_version=CNS_CONTRACT_VERSION,
