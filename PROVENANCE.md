@@ -10,18 +10,19 @@ which claims in the record did not survive verification.
 
 ## Sources
 
-Reconstructed from five conversation archives.
+Reconstructed from five conversation archives. The archives are not part of
+this repository, so the entries below give file names only.
 
 | Source | Contributes |
 |--------|-------------|
-| `Gemini_Extraction/source/raw/original_gemini_export.json[864]`, `[1704]` | The `ZTS_Gate` enum with the fail-fast sequence and its position comments; the four-module DIT assembly; `REGEX_CACHE` |
-| `Claude_History/transcripts/8cdf517a-…md` | The G1-G7 gate map with names and codes; the module diagram; the fail-fast sequence as a formula; the clinical audit that separated the claims from the engineering |
-| `Claude_History/transcripts/b3526879-…md` | The GSA v13.0 unified assembly: `CitadelProcessor`, `KineticGovernor`, `ArchitectCapstone`, thread alpha/beta split, oscillation protection |
-| `Claude_History/transcripts/730af555-…md` | Citadel v1.1 decoupled build: `CitadelDetector` / `CitadelTransformer` / `CitadelScorer`, the `PROFILES` table, penalty weights, the em dash rule |
-| `Claude_History/transcripts/e8e5bb13-…md` | Per-gate filter classes with docstrings; `KineticGovernor` with the 0.815 coefficient; HMAC checksum |
-| `ChatGPT_History/transcripts/6a89fcc9-…md` | The iteration audit: five numbered refactors with deltas, including the fail-fast reorder |
-| `ChatGPT_History/transcripts/6a20e432-…md` | `HyperTestTruthProtocol`, the L1-L7 predecessor with the VAL ledger |
-| `Gemini_Extraction/evidence/evidence_ledger.jsonl` | Dated corroboration: `VSA-02062` (2026-04-14, the nomenclature lock that fixed the ZTS acronym), `VSA-01570` (2026-06-04, module paths and maturity levels), `VSA-01203` (2026-06-18, the v1.1 structural audit) |
+| `original_gemini_export.json[864]`, `[1704]` | The `ZTS_Gate` enum with the fail-fast sequence and its position comments; the four-module assembly; `REGEX_CACHE` |
+| Claude transcript `8cdf517a-…md` | The G1-G7 gate map with names and codes; the module diagram; the fail-fast sequence as a formula; the clinical audit that separated the claims from the engineering |
+| Claude transcript `b3526879-…md` | The GSA v13.0 unified assembly: `CitadelProcessor`, `KineticGovernor`, `ArchitectCapstone`, thread alpha/beta split, oscillation protection |
+| Claude transcript `730af555-…md` | Citadel v1.1 decoupled build: `CitadelDetector` / `CitadelTransformer` / `CitadelScorer`, the `PROFILES` table, penalty weights, the em dash rule |
+| Claude transcript `e8e5bb13-…md` | Per-gate filter classes with docstrings; `KineticGovernor` with the 0.815 coefficient; HMAC checksum |
+| ChatGPT transcript `6a89fcc9-…md` | The iteration audit: five numbered refactors with deltas, including the fail-fast reorder |
+| ChatGPT transcript `6a20e432-…md` | `HyperTestTruthProtocol`, the L1-L7 predecessor with the VAL ledger |
+| `evidence_ledger.jsonl` | Dated corroboration: `VSA-02062` (2026-04-14, the nomenclature lock that fixed the ZTS acronym), `VSA-01570` (2026-06-04, module paths and maturity levels), `VSA-01203` (2026-06-18, the v1.1 structural audit) |
 
 ### Lineage
 
@@ -30,7 +31,7 @@ The stack was renamed twice. Same architecture throughout.
 ```
 7-Layer Zero-Trust Construct   (Mar 2026)  L1–L7, conceptual
         ↓
-HTTP / Hyper Test Truth Protocol            L1–L7, first working code, VAL ledger
+Hyper Test Truth Protocol                   L1-L7, first working code, VAL ledger
         ↓
 VSA / Vassal-State Architecture             Citadel naming, detector/transformer/scorer
         ↓  2026-04-14 nomenclature lock
@@ -120,9 +121,8 @@ reader of the file can satisfy is not a capstone. Release now compares against
 a caller-supplied authority using `hmac.compare_digest`, with no default: the
 constructor raises rather than fall back to a known value.
 
-**The HMAC key was hardcoded** as
-`b"GSA_ADAMANTIUM_CORE_STASIS_SIGNATURE_815"`. A published key authenticates
-nothing. The key is now a required argument, and the tower generates a random
+**The HMAC key was hardcoded** as a fixed string in the original source (not
+reproduced here). A published key authenticates nothing. The key is now a required argument, and the tower generates a random
 per-instance key when one is not supplied.
 
 **The ledger is described accurately.** It is tamper-evident, not
@@ -196,10 +196,11 @@ that could be measured against.
 ### "1.0000 Parity, verified by the 7x70 Hyper Test Truth Protocol"
 
 Described as 490 micro-simulations establishing mathematical parity. The
-archive's audit states plainly that the parity figure and the HTTP grind were
-"internal semantic concepts... metaphorical constraints modeled by the AI to
-enforce rigid tone restrictions, not external mathematical tests run on
-functional code." No test harness corresponding to them exists in the record.
+archive's audit states plainly that the parity figure and the Hyper Test Truth
+Protocol grind were "internal semantic concepts... metaphorical constraints
+modeled by the AI to enforce rigid tone restrictions, not external mathematical
+tests run on functional code." No test harness corresponding to them exists in
+the record.
 
 The score survives in this implementation because it has a real definition:
 100 minus penalties. It is a score, not a proof.
@@ -211,8 +212,8 @@ noise" is undefined.
 
 ### "42% higher efficiency via concurrent execution"
 
-From the DIT assembly docstring. Unmeasured. Concurrency between the governor
-and the sieve is real and is tested here; the figure is not.
+From the four-module assembly docstring. Unmeasured. Concurrency between the
+governor and the sieve is real and is tested here; the figure is not.
 
 ### "Hardware-bound", "BIOS", "Production-Staged (Compliance Ready)"
 
