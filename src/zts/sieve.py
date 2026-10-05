@@ -23,7 +23,7 @@ from .profiles import get as get_profile
 from .result import Finding, GateResult, SieveResult, Verdict
 
 #: Bedrock axioms. G1 rejects payloads that try to assert or overwrite these.
-#: Reproduced from the archived `bedrock_axioms` list, extended during
+#: Reproduced from the original private axiom list, extended during
 #: reconstruction with the two constraints the later builds enforced in prose.
 BEDROCK_AXIOMS: tuple[str, ...] = (
     "logic > meaning",

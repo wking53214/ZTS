@@ -58,7 +58,7 @@ class LogicCornerstone:
     Normalizes what arrives before any gate sees it: unicode whitespace, stray
     control characters, and the punctuation rule. Cheap, unconditional, and
     idempotent. It is the only component in the stack that the archive
-    described as "hardware-bound", which it was not and is not.
+    described as tied to hardware, which it was not and is not.
     """
 
     def __init__(self, profile: str = "default") -> None:

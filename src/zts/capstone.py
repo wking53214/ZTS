@@ -10,14 +10,11 @@ the last thing standing between a generated payload and its consumer. Whether
 that trade is worth making depends entirely on what the payload is for, which
 is why the default is AUTO and the strict modes are opt-in.
 
-The archived version implemented the handshake as:
-
-    if signature == "ADMIN_OVERRIDE": release
-
-which is a hardcoded password in source control, and a capstone that any reader
-of the file can satisfy is not a capstone. This implementation compares against
-a caller-supplied authority using a constant-time comparison, and has no
-default value to fall back to.
+The earlier private version released whenever the presented signature equalled
+a literal string written into the source, which is a hardcoded password in
+source control, and a capstone that any reader of the file can satisfy is not a
+capstone. This implementation compares against a caller-supplied authority
+using a constant-time comparison, and has no default value to fall back to.
 """
 
 from __future__ import annotations

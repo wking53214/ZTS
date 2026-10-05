@@ -30,7 +30,7 @@ class TestArrayStructure:
         ]
 
     def test_fail_fast_order_matches_archive(self):
-        # The archived ZTS_Gate enum: PPA, SBF, AB, SCF, SND, HCA.
+        # The original private gate enum: PPA, SBF, AB, SCF, SND, HCA.
         # Reconstructed as PPA, SBF, AB, SND, SCF, HCA: SND is a lexical gate
         # and belongs with AB, ahead of the two semantic gates. See PROVENANCE.
         assert [g.code for g in FAIL_FAST_ORDER] == [
