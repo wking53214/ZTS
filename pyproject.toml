@@ -9,7 +9,7 @@ description = "Zero Trust Stack: a deterministic linguistic filtration array (G1
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
-authors = [{ name = "William King" }]
+authors = [{ name = "William N. King" }]
 keywords = ["llm", "filter", "governance", "middleware", "sycophancy", "zero-trust"]
 classifiers = [
     "Development Status :: 4 - Beta",
