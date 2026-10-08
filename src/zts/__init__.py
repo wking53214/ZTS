@@ -37,6 +37,7 @@ from .profiles import get as get_profile
 from .result import Finding, GateResult, SieveResult, TowerResult, Verdict
 from .sieve import BEDROCK_AXIOMS, PENALTIES, ZeroTrustSieve
 from .tower import DeterministicIntegrityTower, LogicCornerstone
+from .dashboard import TelemetryDashboard
 
 __version__ = "13.0.0"
 
@@ -92,6 +93,8 @@ __all__ = [
     "GateResult",
     "SieveResult",
     "TowerResult",
+    # telemetry
+    "TelemetryDashboard",
     # audit
     "ValLedger",
     "LedgerEntry",

@@ -30,6 +30,7 @@ import time
 from collections.abc import Awaitable, Callable
 
 from .capstone import ArchitectsProtocol, ReleaseMode
+from .dashboard import TelemetryDashboard
 from .gates import Gate
 from .governor import KineticGovernor
 from .ledger import ValLedger, checksum
@@ -80,6 +81,7 @@ class DeterministicIntegrityTower:
         capstone: ArchitectsProtocol | None = None,
         governor: KineticGovernor | None = None,
         hmac_key: bytes | None = None,
+        dashboard: TelemetryDashboard | None = None,
     ) -> None:
         self.profile = get_profile(profile) if isinstance(profile, str) else profile
         self.lc = LogicCornerstone(self.profile.name)
@@ -88,6 +90,8 @@ class DeterministicIntegrityTower:
         self.tap = capstone or ArchitectsProtocol(ReleaseMode.AUTO)
         self.ledger = ValLedger()
         self._key = hmac_key or secrets.token_bytes(32)
+        #: Optional outcome counter. Records only; never changes a decision.
+        self.dashboard = dashboard
 
     # --- synchronous path ---------------------------------------------------
 
@@ -198,6 +202,20 @@ class DeterministicIntegrityTower:
         )
 
     def _finish(
+        self,
+        result: SieveResult,
+        signature: str | None,
+        attempts: int,
+        budget: float,
+        started: int,
+    ) -> TowerResult:
+        """Decide release, then record the outcome if a dashboard is attached."""
+        outcome = self._decide(result, signature, attempts, budget, started)
+        if self.dashboard is not None:
+            self.dashboard.record(outcome)
+        return outcome
+
+    def _decide(
         self,
         result: SieveResult,
         signature: str | None,
