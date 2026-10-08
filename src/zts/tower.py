@@ -28,12 +28,13 @@ import asyncio
 import secrets
 import time
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 
 from .capstone import ArchitectsProtocol, ReleaseMode
 from .dashboard import TelemetryDashboard
 from .gates import Gate
 from .governor import KineticGovernor
-from .ledger import ValLedger, checksum
+from .ledger import ValLedger, checksum, load_or_create_ledger_key
 from .normalizer import StructureNormalizer, tidy
 from .profiles import Profile
 from .profiles import get as get_profile
@@ -82,6 +83,8 @@ class DeterministicIntegrityTower:
         governor: KineticGovernor | None = None,
         hmac_key: bytes | None = None,
         dashboard: TelemetryDashboard | None = None,
+        ledger_key_file: str | Path | None = None,
+        persist_ledger_key: bool = True,
     ) -> None:
         self.profile = get_profile(profile) if isinstance(profile, str) else profile
         self.lc = LogicCornerstone(self.profile.name)
@@ -89,7 +92,15 @@ class DeterministicIntegrityTower:
         self.kg = governor or KineticGovernor()
         self.tap = capstone or ArchitectsProtocol(ReleaseMode.AUTO)
         self._key = hmac_key or secrets.token_bytes(32)
-        self.ledger = ValLedger(key=self._key)
+        # By default the ledger key is read from (or created in) an owner-only file,
+        # so fingerprints can be checked after a restart. persist_ledger_key=False
+        # gives a random key for this run only. Either way it is separate from the
+        # release-checksum key.
+        if persist_ledger_key:
+            ledger_key = load_or_create_ledger_key(ledger_key_file)
+        else:
+            ledger_key = secrets.token_bytes(32)
+        self.ledger = ValLedger(key=ledger_key)
         #: Optional outcome counter. Records only; never changes a decision.
         self.dashboard = dashboard
 

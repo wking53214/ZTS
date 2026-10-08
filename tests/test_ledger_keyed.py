@@ -61,10 +61,3 @@ class TestTowerUsesItsKey:
         last = tower.ledger.entries[-1]
         assert tower.ledger.payload_matches(last, result.output)
 
-    def test_tower_ledger_is_keyed_by_the_tower_key(self):
-        result_a = DeterministicIntegrityTower("ops", hmac_key=b"a" * 32)
-        result_b = DeterministicIntegrityTower("ops", hmac_key=b"b" * 32)
-        out_a = result_a.enforce(CLEAN)
-        out_b = result_b.enforce(CLEAN)
-        assert out_a.output == out_b.output == CLEAN
-        assert result_a.ledger.entries[-1].payload_digest != result_b.ledger.entries[-1].payload_digest

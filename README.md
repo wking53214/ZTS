@@ -167,18 +167,17 @@ Numbers above are from one run on one machine. Run `zts bench` for yours.
 
 ## Open items
 
-- **Ledger key: not decided.** The ledger stores a keyed fingerprint of each
-  payload. If no key is passed in, the ledger makes a random key that is lost
-  when the process ends, so the fingerprints cannot be checked later. Where the
-  key should live is still open. The options are a secret manager, a key file
-  readable only by its owner, or reusing the release-checksum key. The plan is a
-  separate key for the ledger, with a key ID stored on each entry so keys can be
-  rotated. Decide this once the deployment environment is chosen.
+- **Ledger key: stored in an owner-only file (decided for Linux).** The ledger
+  stores a keyed fingerprint of each payload. By default the tower keeps the key
+  in `~/.config/zts/ledger.key` (or under `$XDG_CONFIG_HOME`). The file is created
+  on first use with mode 600, and it is refused if other users can read it. Pass
+  `persist_ledger_key=False` for a random key that lasts only for one run. Still
+  open: key IDs on each entry so keys can be rotated.
 
 ## Tests
 
 ```bash
-pytest        # 98 tests
+pytest        # 196 tests
 ```
 
 ## What this is
