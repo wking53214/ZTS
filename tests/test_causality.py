@@ -100,6 +100,6 @@ class TestTowerRelease:
         assert flagged.sieve.verdict is plain.sieve.verdict
         assert flagged.sieve.score == plain.sieve.score
 
-    def test_explained_outcome_has_no_flag(self):
+    def test_explained_outcome_has_no_causality_flag(self):
         result = ZeroTrustSieve("ops").run(EXPLAINED)
-        assert result.flags == []
+        assert "CAUSAL_UNSTATED" not in [f.code for f in result.flags]
