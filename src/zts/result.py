@@ -60,6 +60,21 @@ class GateResult:
         return self.payload_in != self.payload_out
 
 
+@dataclass(frozen=True)
+class Flag:
+    """A review prompt. It never changes the verdict, the score, or the payload.
+
+    Flags sit beside the gate findings. A finding is a rule the payload broke.
+    A flag is a spot a person should look at before release, such as an outcome
+    stated without its cause.
+    """
+
+    code: str
+    evidence: str
+    offset: int = -1
+    detail: str = ""
+
+
 @dataclass
 class SieveResult:
     """Outcome of one pass through the gate array."""
@@ -78,6 +93,8 @@ class SieveResult:
     #: Gates that never ran because of the short circuit.
     gates_skipped: int = 0
     elapsed_ns: int = 0
+    #: Review prompts. Informational only: not part of the verdict or score.
+    flags: list[Flag] = field(default_factory=list)
 
     @property
     def passed(self) -> bool:
@@ -132,6 +149,7 @@ class TowerResult:
 __all__ = [
     "Verdict",
     "Finding",
+    "Flag",
     "GateResult",
     "SieveResult",
     "TowerResult",
