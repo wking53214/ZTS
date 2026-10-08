@@ -1,17 +1,14 @@
-"""Leakage review flag: prompts for card numbers and credentials in a payload.
+"""Leakage check: finds card numbers and credentials in a payload, and holds it.
 
-A payload that carries a live card number or a credential should not leave the
-system unnoticed. This module flags those spots for a person to check.
+A payload that carries a live card number or a credential must not be released.
+Any hit sets the sieve verdict to BREACH, so the tower withholds the output.
+The check never rewrites text. Redacting would hide the problem and could break
+the payload, so the payload is held as it is, for a person to deal with.
 
-Flag-only, by design, the same as the other review flags:
+Design rules:
 
-  - It never redacts. Replacing text here would hide the problem from the
-    reviewer and could break the payload. The flag names the spot instead.
-  - It is not a gate. It adds no score penalty and does not change the verdict,
-    so a flagged payload releases exactly as it would have without the flag.
-    Whether a flagged leak should block release is a separate decision.
-
-Two design rules keep the flag from becoming a second leak:
+  - The hit never stores the secret. Evidence is masked: a card shows only its
+    last four digits, and a credential shows only its name.
 
   - The flag never stores the secret. Evidence is masked: a card shows only its
     last four digits, and a credential shows only its name.
@@ -45,6 +42,9 @@ _PREFIXED: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
 )
 
 MAX_FLAGS: Final = 10
+
+#: Flag codes that hold a payload. Any other review flag stays advisory.
+BLOCKING_CODES: Final = frozenset({"CARD_NUMBER", "CREDENTIAL"})
 
 
 def luhn_valid(digits: str) -> bool:

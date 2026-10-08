@@ -101,17 +101,34 @@ class TestSieveWiring:
         result = ZeroTrustSieve(profile).run(f"Charge {CARD}")
         assert "CARD_NUMBER" in [f.code for f in result.flags]
 
-    def test_flag_does_not_change_verdict_score_or_payload(self):
+    def test_leak_holds_payload_and_keeps_text_unchanged(self):
         text = f"Use token={GH}"
         result = ZeroTrustSieve("ops").run(text)
         assert result.flags
-        assert result.verdict is Verdict.CLEAN
-        assert result.score == 100
+        assert result.verdict is Verdict.BREACH
+        assert not result.passed
         assert result.payload_out == text
 
-    def test_tower_releases_flagged_payload_unchanged(self):
+    def test_leak_holds_on_every_profile(self):
+        for profile in ("default", "ops", "exec", "legal"):
+            result = ZeroTrustSieve(profile).run(f"Charge {CARD}")
+            assert result.verdict is Verdict.BREACH, profile
+
+    def test_non_blocking_flags_still_release(self):
+        # Causality and passive flags stay advisory: the payload still passes.
+        result = ZeroTrustSieve("ops").run("Throughput increased; the report was completed.")
+        assert result.flags
+        assert result.passed
+
+    def test_tower_holds_leaking_payload(self):
         text = f"Charge {CARD}"
         result = DeterministicIntegrityTower("ops", hmac_key=b"k" * 32).enforce(text)
-        assert result.released
-        assert result.output == text
+        assert not result.released
+        assert result.output == ""
         assert all(isinstance(f, Flag) for f in result.sieve.flags)
+
+    def test_ledger_export_never_contains_the_card_digits(self):
+        tower = DeterministicIntegrityTower("ops", hmac_key=b"k" * 32)
+        tower.enforce(f"Charge {CARD}")
+        assert len(tower.ledger) > 0
+        assert "4111111111111111" not in tower.ledger.to_jsonl()
