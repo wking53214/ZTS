@@ -35,6 +35,8 @@ class Profile:
     max_retries: int = 3
     #: Raise a passive-voice review flag. Flag only: never rewrites or blocks.
     passive_review: bool = False
+    #: Raise an unsupported-claim review flag. Flag only: never rewrites or blocks.
+    evidence_review: bool = False
 
     def enables(self, gate: Gate) -> bool:
         """Does this profile run `gate` at all?"""
@@ -68,6 +70,7 @@ OPS = Profile(
     enforced=frozenset(_SYNTACTIC | _ANTI_SYCOPHANCY | _AXIOMATIC | _SEMANTIC),
     advisory=frozenset(),
     passive_review=True,
+    evidence_review=True,
 )
 
 #: Executive summary. Tolerates unsupported claims; will not tolerate voice.
@@ -87,6 +90,7 @@ LEGAL = Profile(
     advisory=frozenset(),
     max_retries=5,
     passive_review=True,
+    evidence_review=True,
 )
 
 PROFILES: dict[str, Profile] = {

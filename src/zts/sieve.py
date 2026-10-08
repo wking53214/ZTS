@@ -17,6 +17,7 @@ from collections.abc import Callable, Iterable, Sequence
 
 from . import patterns
 from .causality import causality_flags
+from .evidence import evidence_flags
 from .gates import FAIL_FAST_ORDER, Gate
 from .leakage import BLOCKING_CODES, leakage_flags
 from .passive import passive_flags
@@ -379,6 +380,8 @@ class ZeroTrustSieve:
         flags = causality_flags(current)
         if self.profile.passive_review:
             flags.extend(passive_flags(current))
+        if self.profile.evidence_review:
+            flags.extend(evidence_flags(current))
         leaks = leakage_flags(current)
         flags.extend(leaks)
 
