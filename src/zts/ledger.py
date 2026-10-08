@@ -15,12 +15,21 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import secrets
 import time
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
 
 GENESIS = "0" * 64
+
+#: Where the ledger key lives on Linux when a caller asks for the default.
+DEFAULT_KEY_PATH = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "zts" / "ledger.key"
+
+
+class LedgerKeyError(RuntimeError):
+    """The ledger key file is missing, malformed, or readable by someone else."""
 
 
 @dataclass
@@ -128,6 +137,46 @@ class ValLedger:
         )
 
 
+def load_or_create_ledger_key(path: str | Path = DEFAULT_KEY_PATH) -> bytes:
+    """Return the ledger key stored at `path`, creating it on first use.
+
+    The file holds 32 random bytes and must be owned by the current user with
+    no permissions for group or others (mode 0600). A key that others can read
+    lets them match fingerprints against guessed card numbers, so a file that
+    fails this check is refused rather than used.
+    """
+    path = Path(path)
+    try:
+        return _read_key(path)
+    except FileNotFoundError:
+        pass
+
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    key = secrets.token_bytes(32)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        # Another process created it between the read and the create. Use theirs.
+        return _read_key(path)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(key)
+        handle.flush()
+        os.fsync(handle.fileno())
+    return key
+
+
+def _read_key(path: Path) -> bytes:
+    info = path.stat()
+    if info.st_uid != os.getuid():
+        raise LedgerKeyError(f"{path} is not owned by the current user")
+    if info.st_mode & 0o077:
+        raise LedgerKeyError(f"{path} is readable by other users; set its mode to 600")
+    key = path.read_bytes()
+    if len(key) != 32:
+        raise LedgerKeyError(f"{path} does not hold a 32-byte key")
+    return key
+
+
 def checksum(payload: str, key: bytes) -> str:
     """HMAC-SHA384 over a released payload.
 
@@ -139,4 +188,12 @@ def checksum(payload: str, key: bytes) -> str:
     return hmac.new(key, payload.encode("utf-8"), hashlib.sha384).hexdigest()
 
 
-__all__ = ["ValLedger", "LedgerEntry", "checksum", "GENESIS"]
+__all__ = [
+    "ValLedger",
+    "LedgerEntry",
+    "LedgerKeyError",
+    "checksum",
+    "load_or_create_ledger_key",
+    "DEFAULT_KEY_PATH",
+    "GENESIS",
+]
