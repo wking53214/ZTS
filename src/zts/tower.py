@@ -88,8 +88,8 @@ class DeterministicIntegrityTower:
         self.zts = ZeroTrustSieve(self.profile)
         self.kg = governor or KineticGovernor()
         self.tap = capstone or ArchitectsProtocol(ReleaseMode.AUTO)
-        self.ledger = ValLedger()
         self._key = hmac_key or secrets.token_bytes(32)
+        self.ledger = ValLedger(key=self._key)
         #: Optional outcome counter. Records only; never changes a decision.
         self.dashboard = dashboard
 

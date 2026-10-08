@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import secrets
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -55,9 +56,16 @@ class LedgerEntry:
 
 
 class ValLedger:
-    """Append-only hash-chained transaction log."""
+    """Append-only hash-chained transaction log.
 
-    def __init__(self) -> None:
+    Each entry stores a keyed fingerprint of its payload (HMAC-SHA256), never the
+    payload text. Without the key, a fingerprint cannot be matched against guesses
+    of a low-entropy value such as a card number. The chain itself is checked
+    without the key.
+    """
+
+    def __init__(self, key: bytes | None = None) -> None:
+        self._key = key or secrets.token_bytes(32)
         self._entries: list[LedgerEntry] = []
 
     def __len__(self) -> int:
@@ -88,7 +96,7 @@ class ValLedger:
             layer=layer,
             status=status,
             detail=detail,
-            payload_digest=hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+            payload_digest=self._fingerprint(payload),
             previous=self.head,
             extra=dict(extra),
         )
@@ -96,8 +104,15 @@ class ValLedger:
         self._entries.append(entry)
         return entry
 
+    def _fingerprint(self, payload: str) -> str:
+        return hmac.new(self._key, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    def payload_matches(self, entry: LedgerEntry, payload: str) -> bool:
+        """Does `payload` match the fingerprint stored on `entry`? Needs the ledger key."""
+        return hmac.compare_digest(entry.payload_digest, self._fingerprint(payload))
+
     def verify(self) -> tuple[bool, str]:
-        """Walk the chain. Returns (ok, reason)."""
+        """Walk the chain. Returns (ok, reason). Does not need the key."""
         previous = GENESIS
         for entry in self._entries:
             if entry.previous != previous:
