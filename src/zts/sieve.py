@@ -18,6 +18,7 @@ from collections.abc import Callable, Iterable, Sequence
 from . import patterns
 from .causality import causality_flags
 from .gates import FAIL_FAST_ORDER, Gate
+from .leakage import BLOCKING_CODES, leakage_flags
 from .passive import passive_flags
 from .normalizer import StructureNormalizer, normalize_punctuation, tidy
 from .profiles import Profile
@@ -373,14 +374,19 @@ class ZeroTrustSieve:
             )
             current = normalize_punctuation(current)
 
-        # Review flags: prompts only. Computed after the array and deliberately
-        # kept out of the score and the verdict below.
+        # Review flags: prompts only. Computed after the array and kept out of
+        # the score. The one exception is leakage, which holds the payload.
         flags = causality_flags(current)
         if self.profile.passive_review:
             flags.extend(passive_flags(current))
+        leaks = leakage_flags(current)
+        flags.extend(leaks)
 
         score = _score(all_findings, punct_findings, self.profile)
         verdict = _overall(all_findings, score, self.profile, breached_at)
+        # Leakage applies to every profile and holds the payload at any score.
+        if any(f.code in BLOCKING_CODES for f in leaks):
+            verdict = Verdict.BREACH
 
         return SieveResult(
             payload_in=payload,
