@@ -168,12 +168,11 @@ Numbers above are from one run on one machine. Run `zts bench` for yours.
 ## Open items
 
 - **Ledger key: stored in an owner-only file (decided for Linux).** The ledger
-  stores a keyed fingerprint of each payload. The key lives in a file that only
-  its owner can read. It is created on first use, and it is refused if other
-  users can read it. Pass `ledger_key_file` to the tower to use it. Without it,
-  the ledger uses a random key per run, so fingerprints cannot be checked after
-  a restart. Still open: whether the default tower should use the file, and
-  key IDs on each entry so keys can be rotated.
+  stores a keyed fingerprint of each payload. By default the tower keeps the key
+  in `~/.config/zts/ledger.key` (or under `$XDG_CONFIG_HOME`). The file is created
+  on first use with mode 600, and it is refused if other users can read it. Pass
+  `persist_ledger_key=False` for a random key that lasts only for one run. Still
+  open: key IDs on each entry so keys can be rotated.
 
 ## Tests
 

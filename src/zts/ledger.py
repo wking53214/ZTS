@@ -24,8 +24,10 @@ from typing import Any
 
 GENESIS = "0" * 64
 
-#: Where the ledger key lives on Linux when a caller asks for the default.
-DEFAULT_KEY_PATH = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "zts" / "ledger.key"
+def default_key_path() -> Path:
+    """Where the ledger key lives by default: ~/.config/zts/ledger.key (or $XDG_CONFIG_HOME)."""
+    base = os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
+    return Path(base) / "zts" / "ledger.key"
 
 
 class LedgerKeyError(RuntimeError):
@@ -137,15 +139,15 @@ class ValLedger:
         )
 
 
-def load_or_create_ledger_key(path: str | Path = DEFAULT_KEY_PATH) -> bytes:
-    """Return the ledger key stored at `path`, creating it on first use.
+def load_or_create_ledger_key(path: str | Path | None = None) -> bytes:
+    """Return the ledger key stored at `path` (default: default_key_path()), creating it on first use.
 
     The file holds 32 random bytes and must be owned by the current user with
     no permissions for group or others (mode 0600). A key that others can read
     lets them match fingerprints against guessed card numbers, so a file that
     fails this check is refused rather than used.
     """
-    path = Path(path)
+    path = Path(path) if path is not None else default_key_path()
     try:
         return _read_key(path)
     except FileNotFoundError:
@@ -194,6 +196,6 @@ __all__ = [
     "LedgerKeyError",
     "checksum",
     "load_or_create_ledger_key",
-    "DEFAULT_KEY_PATH",
+    "default_key_path",
     "GENESIS",
 ]
