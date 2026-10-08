@@ -165,6 +165,16 @@ reorder could not have come from this reorder. See
 
 Numbers above are from one run on one machine. Run `zts bench` for yours.
 
+## Open items
+
+- **Ledger key: not decided.** The ledger stores a keyed fingerprint of each
+  payload. If no key is passed in, the ledger makes a random key that is lost
+  when the process ends, so the fingerprints cannot be checked later. Where the
+  key should live is still open. The options are a secret manager, a key file
+  readable only by its owner, or reusing the release-checksum key. The plan is a
+  separate key for the ledger, with a key ID stored on each entry so keys can be
+  rotated. Decide this once the deployment environment is chosen.
+
 ## Tests
 
 ```bash
