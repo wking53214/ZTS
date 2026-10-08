@@ -33,6 +33,8 @@ class Profile:
     punctuation: bool = True
     #: Maximum rewrite attempts before the pipeline returns best-effort output.
     max_retries: int = 3
+    #: Raise a passive-voice review flag. Flag only: never rewrites or blocks.
+    passive_review: bool = False
 
     def enables(self, gate: Gate) -> bool:
         """Does this profile run `gate` at all?"""
@@ -65,6 +67,7 @@ OPS = Profile(
     threshold=90,
     enforced=frozenset(_SYNTACTIC | _ANTI_SYCOPHANCY | _AXIOMATIC | _SEMANTIC),
     advisory=frozenset(),
+    passive_review=True,
 )
 
 #: Executive summary. Tolerates unsupported claims; will not tolerate voice.
@@ -73,6 +76,7 @@ EXEC = Profile(
     threshold=85,
     enforced=frozenset(_SYNTACTIC | _ANTI_SYCOPHANCY),
     advisory=frozenset(_AXIOMATIC | _SEMANTIC),
+    passive_review=True,
 )
 
 #: Strictest. Every gate enforced, near-perfect parity required.
@@ -82,6 +86,7 @@ LEGAL = Profile(
     enforced=frozenset(_SYNTACTIC | _ANTI_SYCOPHANCY | _AXIOMATIC | _SEMANTIC),
     advisory=frozenset(),
     max_retries=5,
+    passive_review=True,
 )
 
 PROFILES: dict[str, Profile] = {
