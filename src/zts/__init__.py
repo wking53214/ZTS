@@ -34,7 +34,7 @@ from .ledger import LedgerEntry, ValLedger
 from .normalizer import StructureNormalizer
 from .profiles import PROFILES, Profile
 from .profiles import get as get_profile
-from .result import Finding, GateResult, SieveResult, TowerResult, Verdict
+from .result import Finding, Flag, GateResult, SieveResult, TowerResult, Verdict
 from .sieve import BEDROCK_AXIOMS, PENALTIES, ZeroTrustSieve
 from .tower import DeterministicIntegrityTower, LogicCornerstone
 from .dashboard import TelemetryDashboard
@@ -90,6 +90,7 @@ __all__ = [
     # results
     "Verdict",
     "Finding",
+    "Flag",
     "GateResult",
     "SieveResult",
     "TowerResult",

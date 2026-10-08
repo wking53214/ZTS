@@ -16,6 +16,7 @@ import time
 from collections.abc import Callable, Iterable, Sequence
 
 from . import patterns
+from .causality import causality_flags
 from .gates import FAIL_FAST_ORDER, Gate
 from .normalizer import StructureNormalizer, normalize_punctuation, tidy
 from .profiles import Profile
@@ -371,6 +372,10 @@ class ZeroTrustSieve:
             )
             current = normalize_punctuation(current)
 
+        # Causality flag: review prompt only. Computed after the array and
+        # deliberately kept out of the score and the verdict below.
+        flags = causality_flags(current)
+
         score = _score(all_findings, punct_findings, self.profile)
         verdict = _overall(all_findings, score, self.profile, breached_at)
 
@@ -385,6 +390,7 @@ class ZeroTrustSieve:
             breached_at=breached_at,
             gates_skipped=sum(1 for r in results if r.verdict is Verdict.NOT_REACHED),
             elapsed_ns=time.perf_counter_ns() - started,
+            flags=flags,
         )
 
 
