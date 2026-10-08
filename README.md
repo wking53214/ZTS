@@ -174,6 +174,10 @@ Numbers above are from one run on one machine. Run `zts bench` for yours.
   `persist_ledger_key=False` for a random key that lasts only for one run. Still
   open: key IDs on each entry so keys can be rotated.
 
+- **Key IDs for rotation: deferred (decided 2026-10-08).** Nothing rotates the
+  ledger key yet, so the key IDs are not built. Build them before the first
+  rotation. Until then, rotating the key would make older fingerprints unmatchable.
+
 ## Tests
 
 ```bash
