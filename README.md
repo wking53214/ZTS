@@ -177,7 +177,7 @@ Numbers above are from one run on one machine. Run `zts bench` for yours.
 ## Tests
 
 ```bash
-pytest        # 98 tests
+pytest        # 196 tests
 ```
 
 ## What this is
