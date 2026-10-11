@@ -47,22 +47,25 @@ class LedgerEntry:
     previous: str
     digest: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
+    #: ID of the key that made payload_digest. Empty only on entries written
+    #: before key IDs were recorded; those still verify, as the chain is unchanged.
+    key_id: str = ""
 
     def compute_digest(self) -> str:
-        body = json.dumps(
-            {
-                "sequence": self.sequence,
-                "timestamp": self.timestamp,
-                "layer": self.layer,
-                "status": self.status,
-                "detail": self.detail,
-                "payload_digest": self.payload_digest,
-                "previous": self.previous,
-                "extra": self.extra,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        )
+        fields: dict[str, Any] = {
+            "sequence": self.sequence,
+            "timestamp": self.timestamp,
+            "layer": self.layer,
+            "status": self.status,
+            "detail": self.detail,
+            "payload_digest": self.payload_digest,
+            "previous": self.previous,
+            "extra": self.extra,
+        }
+        # Included only when set, so entries written before key IDs still verify.
+        if self.key_id:
+            fields["key_id"] = self.key_id
+        body = json.dumps(fields, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
@@ -75,8 +78,9 @@ class ValLedger:
     without the key.
     """
 
-    def __init__(self, key: bytes | None = None) -> None:
+    def __init__(self, key: bytes | None = None, key_id: str | None = None) -> None:
         self._key = key or secrets.token_bytes(32)
+        self.key_id = key_id or key_id_for(self._key)
         self._entries: list[LedgerEntry] = []
 
     def __len__(self) -> int:
@@ -110,6 +114,7 @@ class ValLedger:
             payload_digest=self._fingerprint(payload),
             previous=self.head,
             extra=dict(extra),
+            key_id=self.key_id,
         )
         entry.digest = entry.compute_digest()
         self._entries.append(entry)
@@ -179,15 +184,48 @@ def _read_key(path: Path) -> bytes:
     return key
 
 
+#: The algorithm name stored beside every release signature.
+SIGNATURE_ALGORITHM = "hmac-sha256"
+
+
+def key_id_for(key: bytes) -> str:
+    """A public identifier for a key: a short hash of it, never the key itself.
+
+    Verifiers use it to pick the right key. It is derived, so the same key
+    always gets the same ID, and it reveals nothing useful about the key.
+    """
+    return "key-" + hashlib.sha256(b"zts-key-id|" + key).hexdigest()[:12]
+
+
 def checksum(payload: str, key: bytes) -> str:
-    """HMAC-SHA384 over a released payload.
+    """HMAC-SHA256 over a released payload.
 
     Reproduced from the archived build, which hardcoded the key as a module
     constant. A hardcoded HMAC key authenticates nothing, so the key is a
     required argument here and the tower generates a per-instance random key
     when one is not supplied.
     """
-    return hmac.new(key, payload.encode("utf-8"), hashlib.sha384).hexdigest()
+    return hmac.new(key, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def verify_legacy_checksum(payload: str, key: bytes, value: str) -> bool:
+    """LEGACY, VERIFY-ONLY. Checks a checksum made before the move to HMAC-SHA256.
+
+    Releases made before key IDs were recorded carry an HMAC-SHA384 checksum
+    under the same key. This re-checks them so existing payloads still verify.
+    It never produces a checksum; new releases use :func:`signature_block`.
+    """
+    expected = hmac.new(key, payload.encode("utf-8"), hashlib.sha384).hexdigest()
+    return isinstance(value, str) and hmac.compare_digest(expected, value)
+
+
+def signature_block(payload: str, key: bytes, key_id: str | None = None) -> dict[str, str]:
+    """The release signature as it is stored: algorithm, key ID and value together."""
+    return {
+        "algorithm": SIGNATURE_ALGORITHM,
+        "key_id": key_id or key_id_for(key),
+        "value": checksum(payload, key),
+    }
 
 
 __all__ = [
@@ -195,6 +233,7 @@ __all__ = [
     "LedgerEntry",
     "LedgerKeyError",
     "checksum",
+    "verify_legacy_checksum",
     "load_or_create_ledger_key",
     "default_key_path",
     "GENESIS",

@@ -131,8 +131,11 @@ class TowerResult:
     released: bool
     #: Temporal budget the governor computed, in seconds.
     temporal_budget: float = 0.0
-    #: HMAC-SHA384 of the released payload, or "" when not released.
+    #: HMAC-SHA256 of the released payload, or "" when not released.
+    #: Equal to signature["value"]; kept for callers that read checksum directly.
     checksum: str = ""
+    #: Release signature block: {"algorithm", "key_id", "value"}, or {} when not released.
+    signature: dict[str, str] = field(default_factory=dict)
     #: Rewrite attempts consumed.
     attempts: int = 1
     elapsed_ns: int = 0
