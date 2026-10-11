@@ -34,7 +34,7 @@ from .capstone import ArchitectsProtocol, ReleaseMode
 from .dashboard import TelemetryDashboard
 from .gates import Gate
 from .governor import KineticGovernor
-from .ledger import ValLedger, checksum, load_or_create_ledger_key
+from .ledger import ValLedger, key_id_for, load_or_create_ledger_key, signature_block
 from .normalizer import StructureNormalizer, tidy
 from .profiles import Profile
 from .profiles import get as get_profile
@@ -92,6 +92,7 @@ class DeterministicIntegrityTower:
         self.kg = governor or KineticGovernor()
         self.tap = capstone or ArchitectsProtocol(ReleaseMode.AUTO)
         self._key = hmac_key or secrets.token_bytes(32)
+        self._key_id = key_id_for(self._key)
         # By default the ledger key is read from (or created in) an owner-only file,
         # so fingerprints can be checked after a restart. persist_ledger_key=False
         # gives a random key for this run only. Either way it is separate from the
@@ -263,12 +264,14 @@ class DeterministicIntegrityTower:
                 elapsed_ns=time.perf_counter_ns() - started,
             )
 
+        signature = signature_block(result.payload_out, self._key, self._key_id)
         return TowerResult(
             sieve=result,
             output=result.payload_out,
             released=True,
             temporal_budget=budget,
-            checksum=checksum(result.payload_out, self._key),
+            checksum=signature["value"],
+            signature=signature,
             attempts=attempts,
             elapsed_ns=time.perf_counter_ns() - started,
         )
