@@ -208,6 +208,17 @@ def checksum(payload: str, key: bytes) -> str:
     return hmac.new(key, payload.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+def verify_legacy_checksum(payload: str, key: bytes, value: str) -> bool:
+    """LEGACY, VERIFY-ONLY. Checks a checksum made before the move to HMAC-SHA256.
+
+    Releases made before key IDs were recorded carry an HMAC-SHA384 checksum
+    under the same key. This re-checks them so existing payloads still verify.
+    It never produces a checksum; new releases use :func:`signature_block`.
+    """
+    expected = hmac.new(key, payload.encode("utf-8"), hashlib.sha384).hexdigest()
+    return isinstance(value, str) and hmac.compare_digest(expected, value)
+
+
 def signature_block(payload: str, key: bytes, key_id: str | None = None) -> dict[str, str]:
     """The release signature as it is stored: algorithm, key ID and value together."""
     return {
@@ -222,6 +233,7 @@ __all__ = [
     "LedgerEntry",
     "LedgerKeyError",
     "checksum",
+    "verify_legacy_checksum",
     "load_or_create_ledger_key",
     "default_key_path",
     "GENESIS",
