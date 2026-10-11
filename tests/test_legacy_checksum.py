@@ -26,7 +26,7 @@ def test_legacy_check_refuses_another_key():
 
 
 def test_new_releases_are_not_sha384():
-    block = signature_block("payload", KEY)
+    block = signature_block("payload", KEY, "test-key")
     assert block["algorithm"] == "hmac-sha256"
     assert block["value"] == checksum("payload", KEY)
     assert not verify_legacy_checksum("payload", KEY, block["value"])

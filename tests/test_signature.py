@@ -4,6 +4,8 @@ import hashlib
 import hmac
 import json
 
+import pytest
+
 from zts import DeterministicIntegrityTower
 from zts.ledger import (
     GENESIS,
@@ -11,7 +13,6 @@ from zts.ledger import (
     LedgerEntry,
     ValLedger,
     checksum,
-    key_id_for,
     signature_block,
 )
 
@@ -33,21 +34,27 @@ def test_signature_block_has_algorithm_key_id_and_value():
     assert block["value"] == checksum(CLEAN, KEY)
 
 
-def test_key_id_defaults_to_a_derived_id_that_is_not_the_key():
-    block = signature_block(CLEAN, KEY)
-    assert block["key_id"] == key_id_for(KEY)
-    assert block["key_id"].startswith("key-")
-    assert KEY.hex() not in block["key_id"]
-    assert key_id_for(KEY) == key_id_for(KEY)
-    assert key_id_for(KEY) != key_id_for(b"another-key-entirely-here!!")
+def test_signature_block_refuses_an_unnamed_key():
+    with pytest.raises(ValueError, match="caller-named key_id"):
+        signature_block(CLEAN, KEY, "")
+
+
+def test_tower_with_a_key_needs_a_named_key_id():
+    with pytest.raises(ValueError, match="caller-named key_id"):
+        DeterministicIntegrityTower("ops", hmac_key=KEY)
+
+
+def test_unconfigured_tower_labels_its_key_ephemeral():
+    result = DeterministicIntegrityTower("ops").enforce(CLEAN)
+    assert result.signature["key_id"].startswith("ephemeral-")
 
 
 def test_released_result_carries_the_signature_block():
-    tower = DeterministicIntegrityTower("ops", hmac_key=KEY)
+    tower = DeterministicIntegrityTower("ops", hmac_key=KEY, key_id="test-key")
     result = tower.enforce(CLEAN)
     assert result.released
     assert result.signature["algorithm"] == "hmac-sha256"
-    assert result.signature["key_id"] == key_id_for(KEY)
+    assert result.signature["key_id"] == "test-key"
     assert result.checksum == result.signature["value"]
     assert result.checksum == checksum(result.output, KEY)
 
@@ -60,9 +67,9 @@ def test_refused_result_has_no_signature():
 
 
 def test_ledger_entries_record_the_key_id():
-    ledger = ValLedger(key=KEY)
+    ledger = ValLedger(key=KEY, key_id="ledger-test")
     entry = ledger.log("LC", "PASS", "ok", CLEAN)
-    assert entry.key_id == key_id_for(KEY)
+    assert entry.key_id == "ledger-test"
     assert ledger.verify()[0]
 
 
@@ -95,7 +102,7 @@ def test_entries_written_without_key_id_still_verify():
 
 
 def test_changing_a_recorded_key_id_breaks_the_chain():
-    ledger = ValLedger(key=KEY)
+    ledger = ValLedger(key=KEY, key_id="ledger-test")
     ledger.log("LC", "PASS", "ok", CLEAN)
     assert ledger.verify()[0]
     next(iter(ledger)).key_id = "forged"  # iterating yields the stored entries

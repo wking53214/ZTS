@@ -79,8 +79,15 @@ class ValLedger:
     """
 
     def __init__(self, key: bytes | None = None, key_id: str | None = None) -> None:
-        self._key = key or secrets.token_bytes(32)
-        self.key_id = key_id or key_id_for(self._key)
+        # A supplied key must be named. Without one, the ledger makes a random key
+        # and labels it ephemeral, so a verifier can tell it was not configured.
+        if key is None:
+            key = secrets.token_bytes(32)
+            key_id = key_id or f"ephemeral-{secrets.token_hex(4)}"
+        elif not key_id:
+            raise ValueError("ValLedger with a key needs a caller-named key_id")
+        self._key = key
+        self.key_id = key_id
         self._entries: list[LedgerEntry] = []
 
     def __len__(self) -> int:
@@ -188,15 +195,6 @@ def _read_key(path: Path) -> bytes:
 SIGNATURE_ALGORITHM = "hmac-sha256"
 
 
-def key_id_for(key: bytes) -> str:
-    """A public identifier for a key: a short hash of it, never the key itself.
-
-    Verifiers use it to pick the right key. It is derived, so the same key
-    always gets the same ID, and it reveals nothing useful about the key.
-    """
-    return "key-" + hashlib.sha256(b"zts-key-id|" + key).hexdigest()[:12]
-
-
 def checksum(payload: str, key: bytes) -> str:
     """HMAC-SHA256 over a released payload.
 
@@ -219,11 +217,16 @@ def verify_legacy_checksum(payload: str, key: bytes, value: str) -> bool:
     return isinstance(value, str) and hmac.compare_digest(expected, value)
 
 
-def signature_block(payload: str, key: bytes, key_id: str | None = None) -> dict[str, str]:
-    """The release signature as it is stored: algorithm, key ID and value together."""
+def signature_block(payload: str, key: bytes, key_id: str) -> dict[str, str]:
+    """The release signature as it is stored: algorithm, key ID and value together.
+
+    key_id is required and caller-named. It is never derived from the key.
+    """
+    if not key_id:
+        raise ValueError("signature_block needs a caller-named key_id")
     return {
         "algorithm": SIGNATURE_ALGORITHM,
-        "key_id": key_id or key_id_for(key),
+        "key_id": key_id,
         "value": checksum(payload, key),
     }
 

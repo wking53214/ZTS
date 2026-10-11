@@ -61,7 +61,7 @@ class TestNoEffectOnDecisions:
             assert ZeroTrustSieve(profile).run(PASSIVE).payload_out == PASSIVE
 
     def test_tower_releases_passive_payload_unchanged(self):
-        result = DeterministicIntegrityTower("ops", hmac_key=b"k" * 32).enforce(PASSIVE)
+        result = DeterministicIntegrityTower("ops", hmac_key=b"k" * 32, key_id="test-key").enforce(PASSIVE)
         assert result.released
         assert result.output == PASSIVE
 

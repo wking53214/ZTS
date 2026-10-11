@@ -11,41 +11,41 @@ CARD = "4111 1111 1111 1111"
 
 class TestKeyedFingerprint:
     def test_same_payload_and_key_gives_same_fingerprint(self):
-        a = ValLedger(key=b"k" * 32).log("X", "PASS", payload=CLEAN)
-        b = ValLedger(key=b"k" * 32).log("X", "PASS", payload=CLEAN)
+        a = ValLedger(key=b"k" * 32, key_id="ledger-test").log("X", "PASS", payload=CLEAN)
+        b = ValLedger(key=b"k" * 32, key_id="ledger-test").log("X", "PASS", payload=CLEAN)
         assert a.payload_digest == b.payload_digest
 
     def test_different_keys_give_different_fingerprints(self):
-        a = ValLedger(key=b"k" * 32).log("X", "PASS", payload=CARD)
-        b = ValLedger(key=b"j" * 32).log("X", "PASS", payload=CARD)
+        a = ValLedger(key=b"k" * 32, key_id="ledger-test").log("X", "PASS", payload=CARD)
+        b = ValLedger(key=b"j" * 32, key_id="ledger-test").log("X", "PASS", payload=CARD)
         assert a.payload_digest != b.payload_digest
 
     def test_fingerprint_is_not_plain_sha256_of_the_payload(self):
         import hashlib
 
-        entry = ValLedger(key=b"k" * 32).log("X", "PASS", payload=CARD)
+        entry = ValLedger(key=b"k" * 32, key_id="ledger-test").log("X", "PASS", payload=CARD)
         assert entry.payload_digest != hashlib.sha256(CARD.encode()).hexdigest()
 
     def test_payload_matches_only_the_right_text(self):
-        ledger = ValLedger(key=b"k" * 32)
+        ledger = ValLedger(key=b"k" * 32, key_id="ledger-test")
         entry = ledger.log("X", "PASS", payload=CLEAN)
         assert ledger.payload_matches(entry, CLEAN)
         assert not ledger.payload_matches(entry, CLEAN + " ")
 
     def test_payload_match_fails_under_another_key(self):
-        entry = ValLedger(key=b"k" * 32).log("X", "PASS", payload=CLEAN)
-        assert not ValLedger(key=b"j" * 32).payload_matches(entry, CLEAN)
+        entry = ValLedger(key=b"k" * 32, key_id="ledger-test").log("X", "PASS", payload=CLEAN)
+        assert not ValLedger(key=b"j" * 32, key_id="ledger-test").payload_matches(entry, CLEAN)
 
 
 class TestChainUnchanged:
     def test_chain_verifies_without_the_key(self):
-        ledger = ValLedger(key=b"k" * 32)
+        ledger = ValLedger(key=b"k" * 32, key_id="ledger-test")
         ledger.log("A", "PASS", payload=CLEAN)
         ledger.log("B", "PASS", payload=CARD)
         assert ledger.verify() == (True, "chain intact")
 
     def test_tampered_entry_still_breaks_the_chain(self):
-        ledger = ValLedger(key=b"k" * 32)
+        ledger = ValLedger(key=b"k" * 32, key_id="ledger-test")
         ledger.log("A", "PASS", payload=CLEAN)
         ledger.log("B", "PASS", payload=CLEAN)
         ledger._entries[0].detail = "edited"
@@ -55,7 +55,7 @@ class TestChainUnchanged:
 class TestTowerUsesItsKey:
     def test_tower_ledger_fingerprint_matches_released_output(self):
         key = b"t" * 32
-        tower = DeterministicIntegrityTower("ops", hmac_key=key)
+        tower = DeterministicIntegrityTower("ops", hmac_key=key, key_id="test-key")
         result = tower.enforce(CLEAN)
         assert result.released
         last = tower.ledger.entries[-1]

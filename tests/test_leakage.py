@@ -122,13 +122,13 @@ class TestSieveWiring:
 
     def test_tower_holds_leaking_payload(self):
         text = f"Charge {CARD}"
-        result = DeterministicIntegrityTower("ops", hmac_key=b"k" * 32).enforce(text)
+        result = DeterministicIntegrityTower("ops", hmac_key=b"k" * 32, key_id="test-key").enforce(text)
         assert not result.released
         assert result.output == ""
         assert all(isinstance(f, Flag) for f in result.sieve.flags)
 
     def test_ledger_export_never_contains_the_card_digits(self):
-        tower = DeterministicIntegrityTower("ops", hmac_key=b"k" * 32)
+        tower = DeterministicIntegrityTower("ops", hmac_key=b"k" * 32, key_id="test-key")
         tower.enforce(f"Charge {CARD}")
         assert len(tower.ledger) > 0
         assert "4111111111111111" not in tower.ledger.to_jsonl()

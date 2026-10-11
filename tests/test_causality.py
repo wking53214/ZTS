@@ -87,13 +87,13 @@ class TestSieveWiring:
 
 class TestTowerRelease:
     def test_flagged_payload_is_released_unchanged(self):
-        result = DeterministicIntegrityTower("ops", hmac_key=b"k" * 32).enforce(FLAGGED)
+        result = DeterministicIntegrityTower("ops", hmac_key=b"k" * 32, key_id="test-key").enforce(FLAGGED)
         assert result.released
         assert result.output == FLAGGED
         assert result.checksum
 
     def test_flagged_and_plain_payloads_release_the_same_way(self):
-        tower = DeterministicIntegrityTower("ops", hmac_key=b"k" * 32)
+        tower = DeterministicIntegrityTower("ops", hmac_key=b"k" * 32, key_id="test-key")
         flagged = tower.enforce(FLAGGED)
         plain = tower.enforce(PLAIN)
         assert flagged.released and plain.released

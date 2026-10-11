@@ -88,9 +88,9 @@ class TestTowerWiring:
         assert DeterministicIntegrityTower("ops").dashboard is None
 
     def test_dashboard_never_changes_the_decision(self):
-        plain = DeterministicIntegrityTower("ops", hmac_key=b"k" * 32)
+        plain = DeterministicIntegrityTower("ops", hmac_key=b"k" * 32, key_id="test-key")
         watched = DeterministicIntegrityTower(
-            "ops", hmac_key=b"k" * 32, dashboard=TelemetryDashboard()
+            "ops", hmac_key=b"k" * 32, key_id="test-key", dashboard=TelemetryDashboard()
         )
         for text in (CLEAN, DIRTY):
             a = plain.enforce(text)

@@ -34,7 +34,7 @@ from .capstone import ArchitectsProtocol, ReleaseMode
 from .dashboard import TelemetryDashboard
 from .gates import Gate
 from .governor import KineticGovernor
-from .ledger import ValLedger, key_id_for, load_or_create_ledger_key, signature_block
+from .ledger import ValLedger, load_or_create_ledger_key, signature_block
 from .normalizer import StructureNormalizer, tidy
 from .profiles import Profile
 from .profiles import get as get_profile
@@ -42,6 +42,9 @@ from .result import SieveResult, TowerResult, Verdict
 from .sieve import ZeroTrustSieve
 
 Generator = Callable[[str], Awaitable[str]]
+
+#: Caller-independent name for the ledger key (the key is separate from the release key).
+LEDGER_KEY_ID = "zts-ledger"
 
 #: Rewrite instruction emitted per gate when asking a generator to retry.
 CONSTRAINT_TEXT: dict[Gate, str] = {
@@ -82,6 +85,7 @@ class DeterministicIntegrityTower:
         capstone: ArchitectsProtocol | None = None,
         governor: KineticGovernor | None = None,
         hmac_key: bytes | None = None,
+        key_id: str | None = None,
         dashboard: TelemetryDashboard | None = None,
         ledger_key_file: str | Path | None = None,
         persist_ledger_key: bool = True,
@@ -91,8 +95,16 @@ class DeterministicIntegrityTower:
         self.zts = ZeroTrustSieve(self.profile)
         self.kg = governor or KineticGovernor()
         self.tap = capstone or ArchitectsProtocol(ReleaseMode.AUTO)
-        self._key = hmac_key or secrets.token_bytes(32)
-        self._key_id = key_id_for(self._key)
+        # A supplied release key must be named by the caller. Without one, the
+        # tower signs with a random per-instance key labelled ephemeral.
+        if hmac_key:
+            if not key_id:
+                raise ValueError("hmac_key needs a caller-named key_id")
+            self._key = hmac_key
+            self._key_id = key_id
+        else:
+            self._key = secrets.token_bytes(32)
+            self._key_id = key_id or f"ephemeral-{secrets.token_hex(4)}"
         # By default the ledger key is read from (or created in) an owner-only file,
         # so fingerprints can be checked after a restart. persist_ledger_key=False
         # gives a random key for this run only. Either way it is separate from the
@@ -101,7 +113,7 @@ class DeterministicIntegrityTower:
             ledger_key = load_or_create_ledger_key(ledger_key_file)
         else:
             ledger_key = secrets.token_bytes(32)
-        self.ledger = ValLedger(key=ledger_key)
+        self.ledger = ValLedger(key=ledger_key, key_id=LEDGER_KEY_ID)
         #: Optional outcome counter. Records only; never changes a decision.
         self.dashboard = dashboard
 

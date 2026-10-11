@@ -58,8 +58,8 @@ class TestTowerDefaultsToKeyFile:
         assert restarted.ledger.payload_matches(entry, result.output)
 
     def test_ledger_key_does_not_depend_on_the_release_key(self):
-        a = DeterministicIntegrityTower("ops", hmac_key=b"a" * 32)
-        b = DeterministicIntegrityTower("ops", hmac_key=b"b" * 32)
+        a = DeterministicIntegrityTower("ops", hmac_key=b"a" * 32, key_id="test-key")
+        b = DeterministicIntegrityTower("ops", hmac_key=b"b" * 32, key_id="test-key")
         out_a = a.enforce(CLEAN)
         out_b = b.enforce(CLEAN)
         assert out_a.output == out_b.output == CLEAN
