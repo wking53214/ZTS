@@ -1,0 +1,62 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # The whole suite without CNS. The CNS connector tests skip here; the
+    # independence and version-rule tests run, since they need no CNS.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package with the dev extra
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run the test suite without CNS
+        run: python -m pytest tests/ -q -rs
+
+  cns:
+    # The CNS dock (zts.cns) with the cns extra installed. ZTS_REQUIRE_CNS=1
+    # turns a missing cns into a failure, so the connector tests cannot
+    # silently skip here.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package with the dev and cns extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,cns]"
+          python -m pip show cns
+
+      - name: Run the test suite with CNS present
+        env:
+          ZTS_REQUIRE_CNS: "1"
+        run: python -m pytest tests/ -q -rs
