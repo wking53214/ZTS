@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from typing import Any
 
@@ -8,7 +9,26 @@ from .errors import CNSContractError, CNSUnavailableError, CNSVerificationError
 from .translation import ADAPTER_VERSION, make_unavailable_artifact, translate_identity
 
 
+# The CNS release this seam was frozen against. It is the oldest release the
+# dock accepts, not the only one. CNS adds a field only with a default in a
+# minor release and removes or renames one only in a new major release (the
+# VERSIONING note in cns/__init__.py), and validate_contract checks the
+# IdentityContext fields themselves. So any release of the same major version
+# at or above this one is accepted, and a new major version is refused until
+# ZTS moves to it deliberately.
 CNS_CONTRACT_VERSION = "1.4.0"
+
+
+def cns_version_supported(version: Any) -> bool:
+    """Whether a CNS ``__version__`` is one this dock accepts.
+
+    Only a plain ``X.Y.Z`` string is read; anything else is refused.
+    """
+    if not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        return False
+    found = tuple(int(part) for part in version.split("."))
+    floor = tuple(int(part) for part in CNS_CONTRACT_VERSION.split("."))
+    return found[0] == floor[0] and found >= floor
 
 
 class CNSDock:
@@ -20,23 +40,29 @@ class CNSDock:
 
     def __init__(self) -> None:
         self._cns = None
+        self._cns_digest = None
+        self._cns_version = None
 
     def connect(self) -> None:
         """Import the canonical CNS contract lazily."""
         try:
             import cns
+            from cns.gate import subject_digest
             from cns.governance import IdentityContext
         except (ImportError, ModuleNotFoundError) as exc:
             raise CNSUnavailableError("canonical CNS is unavailable") from exc
 
         actual_version = getattr(cns, "__version__", None)
-        if actual_version != CNS_CONTRACT_VERSION:
+        if not cns_version_supported(actual_version):
             raise CNSContractError(
                 f"incompatible CNS version: expected "
-                f"{CNS_CONTRACT_VERSION}, got {actual_version}"
+                f"{CNS_CONTRACT_VERSION} or a later "
+                f"{CNS_CONTRACT_VERSION.split('.')[0]}.x release, got {actual_version}"
             )
 
         self._cns = IdentityContext
+        self._cns_digest = subject_digest
+        self._cns_version = actual_version
 
     def validate_contract(self) -> bool:
         """Validate that the available CNS contract matches the frozen seam."""
@@ -84,12 +110,27 @@ class CNSDock:
 
         return repr(fields)
 
-    def subject_digest(self, identity: Any) -> str:
-        """Return a deterministic SHA-256 digest of the canonical identity."""
-        import hashlib
+    def identity_content(self, identity: Any) -> dict:
+        """Return the identity fields as plain data, the content a CNS verdict binds to."""
+        self.validate_contract()
 
-        canonical = self.canonicalize(identity)
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return {
+            "tenant_id": identity.tenant_id,
+            "subject_id": identity.subject_id,
+            "roles": list(identity.roles),
+            "trust_level": getattr(identity.trust_level, "value", identity.trust_level),
+            "authentication_method": identity.authentication_method,
+            "verified": bool(identity.verified),
+            "signature": identity.signature,
+        }
+
+    def subject_digest(self, identity: Any) -> str:
+        """Return CNS's own digest (``cns.gate.subject_digest``) of the identity.
+
+        This is the value a CNS ``GateResult.subject_digest`` is compared with,
+        so it must be computed the way CNS computes it, not ZTS's own way.
+        """
+        return self._cns_digest(self.identity_content(identity))
 
     def to_zts_artifact(
         self,
@@ -107,7 +148,7 @@ class CNSDock:
 
         artifact = translate_identity(
             identity,
-            cns_contract_version=CNS_CONTRACT_VERSION,
+            cns_contract_version=self._cns_version,
             compatibility_status=compatibility_status,
         )
 
@@ -146,4 +187,5 @@ __all__ = [
     "ADAPTER_VERSION",
     "CNS_CONTRACT_VERSION",
     "CNSDock",
+    "cns_version_supported",
 ]
