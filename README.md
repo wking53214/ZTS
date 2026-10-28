@@ -6,8 +6,9 @@ rejects a payload before an expensive semantic one has to look at it.
 
 It removes first-person voice, hedging, flattery, and affect vocabulary from
 generated text; it detects attempts to overwrite its own governing
-instructions; and it holds the result unreleased until something outside the
-pipeline authorizes it.
+instructions; and it hands the result to a capstone that releases it
+automatically by default (`ReleaseMode.AUTO`) or, when HANDSHAKE, CALLBACK or
+SEALED is supplied, holds it until something outside the pipeline authorizes it.
 
 ```
                     [ INGESTION PERIMETER ]
@@ -119,9 +120,10 @@ zts scrub --strict "..." || echo "breached" # exit 1 on breach, for CI
 | G6 | PPA | Pronominal Purge Array | syntactic | strip |
 | G7 | TAP | The Architect's Protocol | manual | hold or release |
 
-Execution order is `G6 → G3 → G1 → G5 → G2 → G4`, sorted by cost. `G7` never
-runs automatically; it is the capstone and requires a signal from outside the
-pipeline. See [ARCHITECTURE.md](ARCHITECTURE.md).
+Execution order is `G6 → G3 → G1 → G5 → G2 → G4`, sorted by cost. `G7` is the
+capstone. Under the default `ReleaseMode.AUTO` it releases anything that cleared
+the array; supply HANDSHAKE, CALLBACK or SEALED to require a signal from outside
+the pipeline. See [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Profiles
 
