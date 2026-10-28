@@ -173,4 +173,5 @@ PUNCT 3
 The verdict is the score against the profile threshold, not the presence of a
 finding. One pronoun on `ops` scores 90 against a threshold of 90 and passes,
 with the finding recorded. Five of them do not. A terminal breach at G1 or G4
-overrides the score entirely.
+overrides the score entirely. So does an enforced finding the gate could not
+repair: the payload is held regardless of score.
