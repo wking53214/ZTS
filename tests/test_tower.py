@@ -125,6 +125,15 @@ class TestLedger:
         b = checksum("payload", b"key-two")
         assert a != b, "the key must actually participate"
 
+    def test_truncation_is_detected_against_a_recorded_head(self):
+        ledger = ValLedger()
+        for i in range(3):
+            ledger.log("G6", "PASS", str(i), str(i))
+        head = ledger.head
+        ledger._entries.pop()
+        assert ledger.verify()[0]
+        assert not ledger.verify(expected_head=head)[0]
+
 
 class TestLogicCornerstone:
     def test_strips_control_characters(self):

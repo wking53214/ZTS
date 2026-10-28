@@ -127,8 +127,13 @@ class ValLedger:
         """Does `payload` match the fingerprint stored on `entry`? Needs the ledger key."""
         return hmac.compare_digest(entry.payload_digest, self._fingerprint(payload))
 
-    def verify(self) -> tuple[bool, str]:
-        """Walk the chain. Returns (ok, reason). Does not need the key."""
+    def verify(self, expected_head: str | None = None) -> tuple[bool, str]:
+        """Walk the chain. Returns (ok, reason). Does not need the key.
+
+        A walk alone cannot see entries removed from the tail. Pass the head
+        digest recorded earlier as `expected_head` and the walk also fails
+        when the chain no longer ends there.
+        """
         previous = GENESIS
         for entry in self._entries:
             if entry.previous != previous:
@@ -136,6 +141,8 @@ class ValLedger:
             if entry.digest != entry.compute_digest():
                 return False, f"entry {entry.sequence}: digest mismatch"
             previous = entry.digest
+        if expected_head is not None and previous != expected_head:
+            return False, "head mismatch: chain truncated or replaced"
         return True, "chain intact"
 
     def to_jsonl(self) -> str:
