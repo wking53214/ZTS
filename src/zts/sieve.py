@@ -387,6 +387,10 @@ class ZeroTrustSieve:
 
         score = _score(all_findings, punct_findings, self.profile)
         verdict = _overall(all_findings, score, self.profile, breached_at)
+        # An enforced finding the gate could not repair is still in the
+        # payload. The score does not outweigh it; the payload is held.
+        if any(r.verdict is Verdict.BREACH and not r.mutated for r in results):
+            verdict = Verdict.BREACH
         # Leakage applies to every profile and holds the payload at any score.
         if any(f.code in BLOCKING_CODES for f in leaks):
             verdict = Verdict.BREACH
