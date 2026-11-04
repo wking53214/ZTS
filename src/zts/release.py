@@ -38,6 +38,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -80,8 +81,93 @@ class ReleaseReason:
     LEDGER_UNAVAILABLE = "LEDGER_UNAVAILABLE"
     ACTION_FAILED = "RELEASE_ACTION_FAILED"
     SIEVE_BREACH = "SIEVE_BREACH"
+    DELIVERY_UNCONFIRMED = "DELIVERY_UNCONFIRMED"
+    CANCELLED = "RELEASE_CANCELLED"
+    SHUTTING_DOWN = "SHUTTING_DOWN"
+    ENFORCER_TIMEOUT = "ENFORCER_TIMEOUT"
+    PROOF_PROVIDER_TIMEOUT = "PROOF_PROVIDER_TIMEOUT"
+    POLICY_CHANGED = "POLICY_CHANGED"
+    INVARIANT_VIOLATED = "PRODUCTION_INVARIANT_VIOLATED"
     #: What Enforcer reports when it allows.
     ALLOWED = "VERIFIED_ACTION_BOUND_GRANT"
+
+
+class ReleaseState:
+    """The values of ``TowerResult.release_outcome``. Each is a different fact; none is a synonym.
+
+    denied                      An authorization or precondition check said no. Nothing was spent.
+    not_attempted               No attempt reached an authority: nothing configured, a sieve breach,
+                                no release request, the audit write-ahead failed, or shutting down.
+    failed_before_delivery      Enforcer allowed and the grant is spent, but ZTS stopped before the
+                                delivery callback ran. Nothing was delivered. A new grant is needed.
+    delivery_unknown            The callback began and did not finish, or it finished and the
+                                receiving side did not confirm it. Delivery cannot be ruled out.
+    delivered_audit_incomplete  Delivered, and the final audit record is not durably on disk (the
+                                ledger is in memory, or its last write failed).
+    delivered_unverified        Delivered and durably recorded, but no independent confirmation is
+                                configured, so completion rests on the callback's own return.
+    delivered                   Delivered, independently confirmed, and durably recorded.
+    released_legacy             Released by an explicit legacy capstone. No Enforcer authorization.
+    """
+
+    DENIED = "denied"
+    NOT_ATTEMPTED = "not_attempted"
+    FAILED_BEFORE_DELIVERY = "failed_before_delivery"
+    DELIVERY_UNKNOWN = "delivery_unknown"
+    DELIVERED_AUDIT_INCOMPLETE = "delivered_audit_incomplete"
+    DELIVERED_UNVERIFIED = "delivered_unverified"
+    DELIVERED = "delivered"
+    RELEASED_LEGACY = "released_legacy"
+
+    DELIVERED_STATES = frozenset({DELIVERED, DELIVERED_UNVERIFIED, DELIVERED_AUDIT_INCOMPLETE})
+
+
+#: Reasons that mean nothing was put in front of an authority, as opposed to an authority saying no.
+NOT_ATTEMPTED_REASONS = frozenset({
+    ReleaseReason.NOT_CONFIGURED,
+    ReleaseReason.REQUEST_MISSING,
+    ReleaseReason.SIEVE_BREACH,
+    ReleaseReason.CANCELLED,
+    ReleaseReason.SHUTTING_DOWN,
+})
+
+#: Reasons after which Enforcer may or may not have consumed the grant.
+GRANT_STATE_UNKNOWN_REASONS = frozenset({
+    ReleaseReason.ENFORCER_TIMEOUT,
+    "REPLAY_STORE_ERROR",
+})
+
+
+class CallTimeout(Exception):
+    """A bounded call did not return in time. The call may still be running."""
+
+
+def call_with_timeout(fn: Callable[..., Any], timeout: float | None, *args: Any) -> Any:
+    """Run ``fn(*args)`` on a daemon thread and wait at most ``timeout`` seconds.
+
+    A timeout abandons the wait, not the call: Python cannot stop a thread. Anything
+    that could still act after the caller gave up must check its own abandoned flag
+    (see the release gate). ``timeout=None`` calls ``fn`` inline.
+    """
+    if timeout is None:
+        return fn(*args)
+    box: dict[str, Any] = {}
+    done = threading.Event()
+
+    def runner() -> None:
+        try:
+            box["value"] = fn(*args)
+        except BaseException as exc:  # carried back to the caller
+            box["error"] = exc
+        finally:
+            done.set()
+
+    threading.Thread(target=runner, daemon=True).start()
+    if not done.wait(timeout):
+        raise CallTimeout(f"no answer within {timeout}s")
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
 
 
 class EnforcerUnavailableError(RuntimeError):
@@ -211,6 +297,9 @@ class ReleaseOutcome:
     profile: str = ""
     decided_at: str = ""
     decision: dict[str, object] | None = None
+    #: "spent" (Enforcer allowed), "unspent", or "unknown" (a timeout or replay-store error:
+    #: the grant may or may not have been consumed, so treat it as spent).
+    grant_state: str = "unspent"
     value: Any = field(default=None, repr=False)
 
     def evidence(self) -> dict[str, object]:
@@ -227,6 +316,7 @@ class ReleaseOutcome:
             "action_started": self.action_started,
             "reason_code": self.reason_code,
             "decided_at": self.decided_at,
+            "grant_state": self.grant_state,
             "decision": self.decision,
         }
 
@@ -253,14 +343,20 @@ class EnforcerReleaseGate:
         *,
         policy_version: str,
         dock: CNSDock | None = None,
+        timeout: float | None = None,
     ) -> None:
         if not callable(getattr(enforcer, "execute", None)):
             raise TypeError("enforcer must provide execute(envelope, proof, action)")
         if not isinstance(policy_version, str) or not policy_version.strip():
             raise ValueError("policy_version is required")
         self._enforcer = enforcer
+        if timeout is not None and (not isinstance(timeout, (int, float)) or timeout <= 0):
+            raise ValueError("timeout must be a positive number of seconds, or None")
         self._policy_version = policy_version
         self._dock = dock if dock is not None else CNSDock()
+        #: Bounds the proof provider and the whole Enforcer call (proof verification,
+        #: status revalidation, replay consumption). None waits forever.
+        self.timeout = timeout
 
     @property
     def policy_version(self) -> str:
@@ -275,8 +371,14 @@ class EnforcerReleaseGate:
         *,
         profile: str,
         action: Callable[[str], Any],
+        cancelled: Callable[[], bool] | None = None,
     ) -> ReleaseOutcome:
         """Run ``action(payload)`` if and only if Enforcer allows this exact release.
+
+        ``cancelled`` is polled before Enforcer is asked and again, after its allow,
+        immediately before the action. A cancelled release stops there: before any
+        authority is consulted it spends nothing; after the allow the grant is spent
+        and nothing was delivered.
 
         Never raises for a release problem. ``action`` receives the exact text
         the envelope was built from, and runs inside Enforcer's guarded call,
@@ -287,7 +389,7 @@ class EnforcerReleaseGate:
             raise TypeError("action must be callable")
         state = _State()
         try:
-            return self._release(request, payload, profile, action, state)
+            return self._release(request, payload, profile, action, state, cancelled)
         except _Deny as denial:
             return self._outcome(state, request, profile, denial.reason)
         except Exception as exc:  # fail closed: an unexpected error is a denial
@@ -306,6 +408,7 @@ class EnforcerReleaseGate:
         profile: str,
         action: Callable[[str], Any],
         state: "_State",
+        cancelled: Callable[[], bool] | None = None,
     ) -> ReleaseOutcome:
         if not isinstance(request, ReleaseRequest):
             raise _Deny(ReleaseReason.REQUEST_MISSING)
@@ -360,24 +463,42 @@ class EnforcerReleaseGate:
             envelope_sha256=envelope.envelope_sha256,
         )
 
+        if cancelled is not None and cancelled():
+            raise _Deny(ReleaseReason.CANCELLED)
+
         proof = request.proof
         if request.proof_provider is not None:
             try:
-                proof = request.proof_provider(state.candidate)
+                proof = call_with_timeout(request.proof_provider, self.timeout, state.candidate)
+            except CallTimeout:
+                raise _Deny(ReleaseReason.PROOF_PROVIDER_TIMEOUT) from None
             except Exception:
                 raise _Deny(ReleaseReason.PROOF_PROVIDER_ERROR) from None
+            if cancelled is not None and cancelled():
+                raise _Deny(ReleaseReason.CANCELLED)
 
         def guarded() -> Any:
             # Runs only after Enforcer allowed, and by then the grant is consumed.
             # Record that before anything can fail, so an abort still reports
             # "authorized, grant spent, nothing delivered" and not a plain denial.
-            state.authorized = True
-            # Last-moment rebinding to CNS.
+            with state.lock:
+                state.authorized = True
+                if state.abandoned:
+                    # The caller stopped waiting (timeout). Never deliver after that.
+                    raise ReleaseAbort(ReleaseReason.ENFORCER_TIMEOUT)
+            if cancelled is not None and cancelled():
+                raise ReleaseAbort(ReleaseReason.CANCELLED)
+            # Last-moment rebinding to the policy this envelope was built under, and to CNS.
+            if self._policy_version != state.candidate.policy_version:
+                raise ReleaseAbort(ReleaseReason.POLICY_CHANGED)
             try:
                 self._check_identity(request)
             except _Deny as denial:
                 raise ReleaseAbort(denial.reason) from None
-            state.started = True
+            with state.lock:
+                if state.abandoned:
+                    raise ReleaseAbort(ReleaseReason.ENFORCER_TIMEOUT)
+                state.started = True
             try:
                 value = action(payload)
             except ReleaseAbort:
@@ -387,7 +508,7 @@ class EnforcerReleaseGate:
             state.completed = True
             return value
 
-        outcome = self._enforcer.execute(envelope, proof, guarded)
+        outcome = self._execute_bounded(envelope, proof, guarded, state)
 
         decision = getattr(outcome, "decision", None)
         allowed = (
@@ -407,6 +528,38 @@ class EnforcerReleaseGate:
             state.value = outcome.value
             return self._outcome(state, request, profile, ReleaseReason.ALLOWED)
         raise _Deny(ReleaseReason.ENFORCER_ERROR)
+
+    def _execute_bounded(self, envelope: Any, proof: Any, guarded: Callable[[], Any], state: "_State") -> Any:
+        """Call Enforcer, giving up after ``timeout``, without letting a late call deliver.
+
+        A timed-out call keeps running on its thread. If it has not reached the
+        delivery callback, ``abandoned`` is set under the same lock the callback
+        takes, so the callback refuses when it arrives. If the callback is already
+        running, delivery is in progress and is waited for rather than abandoned.
+        """
+        if self.timeout is None:
+            return self._enforcer.execute(envelope, proof, guarded)
+        box: dict[str, Any] = {}
+        done = threading.Event()
+
+        def runner() -> None:
+            try:
+                box["value"] = self._enforcer.execute(envelope, proof, guarded)
+            except BaseException as exc:
+                box["error"] = exc
+            finally:
+                done.set()
+
+        threading.Thread(target=runner, daemon=True).start()
+        if not done.wait(self.timeout):
+            with state.lock:
+                if not state.started:
+                    state.abandoned = True
+                    raise _Deny(ReleaseReason.ENFORCER_TIMEOUT)
+            done.wait()  # delivery began; it cannot be taken back, so wait for it
+        if "error" in box:
+            raise box["error"]
+        return box["value"]
 
     def _check_identity(self, request: ReleaseRequest) -> None:
         """Re-derive and compare the CNS binding. Raises _Deny; never authorizes."""
@@ -471,6 +624,11 @@ class EnforcerReleaseGate:
             profile=profile,
             decided_at=decided or _now(),
             decision=state.decision,
+            grant_state=(
+                "spent" if state.authorized
+                else "unknown" if reason in GRANT_STATE_UNKNOWN_REASONS
+                else "unspent"
+            ),
             value=state.value if state.released else None,
         )
 
@@ -485,6 +643,8 @@ class _Deny(Exception):
 
 @dataclass
 class _State:
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    abandoned: bool = False
     candidate: ReleaseCandidate | None = None
     decision: dict[str, object] | None = None
     authorized: bool = False
@@ -520,12 +680,16 @@ __all__ = [
     "PARAMETERS_VERSION",
     "RELEASE_OPERATION",
     "ReleaseAbort",
+    "CallTimeout",
+    "NOT_ATTEMPTED_REASONS",
     "ReleaseCandidate",
     "ReleaseOutcome",
+    "ReleaseState",
     "ReleaseReason",
     "ReleaseRequest",
     "TARGET_TYPE",
     "artifact_sha256",
+    "call_with_timeout",
     "enforcer_version_supported",
     "release_parameters_bytes",
 ]

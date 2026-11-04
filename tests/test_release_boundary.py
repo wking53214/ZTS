@@ -61,7 +61,8 @@ def test_a_grant_for_this_exact_release_releases_it_once_and_records_the_evidenc
     result = run(s, mode, request(s))
 
     assert result.released and result.output == TEXT
-    assert result.release_outcome == "released"
+    assert result.release_outcome == "delivered"
+    assert result.delivery_verified is True and result.audit_durable is True
     assert result.reason_code == "VERIFIED_ACTION_BOUND_GRANT"
     assert [out for out, _ in s.sink.calls] == [TEXT]
     assert s.sink.calls[0][1] == result.signature
@@ -287,7 +288,7 @@ def test_attack_11_artifact_mutated_after_authorization_is_not_released(tmp_path
     # built and before the release action. It changes the artifact in that window.
     s.status.on_call = lambda: setattr(s.captured[-1], "payload_out", "Tampered output.")
     result = run(s, mode, request(s))
-    assert_not_released(s, result, "ARTIFACT_CHANGED", outcome="held")
+    assert_not_released(s, result, "ARTIFACT_CHANGED", outcome="failed_before_delivery")
     # The grant was spent by Enforcer, and the record says so.
     assert result.authorization["authorized"] is True
     assert result.authorization["action_started"] is False
@@ -317,7 +318,7 @@ def test_attack_12_cns_disappears_between_authorization_and_release(tmp_path, mo
     with monkeypatch.context() as m:
         s.status.on_call = lambda: m.setitem(sys.modules, "cns", None)
         result = run(s, mode, request(s))
-    assert_not_released(s, result, "CNS_UNAVAILABLE", outcome="held")
+    assert_not_released(s, result, "CNS_UNAVAILABLE", outcome="failed_before_delivery")
     assert result.authorization["authorized"] is True and result.authorization["action_started"] is False
 
 
@@ -439,7 +440,7 @@ def test_attack_23_missing_or_malformed_release_identifier_or_scope(tmp_path, mo
 
 def test_no_release_request_at_all_is_a_denial(tmp_path, mode):
     s = build(tmp_path)
-    assert_not_released(s, run(s, mode, None), "RELEASE_REQUEST_MISSING", outcome="denied")
+    assert_not_released(s, run(s, mode, None), "RELEASE_REQUEST_MISSING", outcome="not_attempted")
 
 
 # ------------------------------------------------- attack 15: the ledger fails
@@ -460,7 +461,7 @@ def test_attack_15_ledger_down_before_the_attempt_is_recorded(tmp_path, mode):
     s = build(tmp_path, ledger=BrokenLedger(lambda layer, status: layer == "TAP"))
     result = run(s, mode, request(s))
     assert result.released is False and result.output == "" and result.signature == {}
-    assert result.reason_code == "LEDGER_UNAVAILABLE" and result.release_outcome == "denied"
+    assert result.reason_code == "LEDGER_UNAVAILABLE" and result.release_outcome == "not_attempted"
     assert s.sink.calls == []
     assert s.candidates == [], "no grant may be requested or spent when the attempt cannot be recorded"
     assert s.status.calls == 0
@@ -469,7 +470,7 @@ def test_attack_15_ledger_down_before_the_attempt_is_recorded(tmp_path, mode):
 def test_attack_15_ledger_down_when_the_release_is_about_to_happen(tmp_path, mode):
     s = build(tmp_path, ledger=BrokenLedger(lambda layer, status: status == "RELEASING"))
     result = run(s, mode, request(s))
-    assert_not_released(s, result, "LEDGER_UNAVAILABLE", outcome="held")
+    assert_not_released(s, result, "LEDGER_UNAVAILABLE", outcome="failed_before_delivery")
     assert result.authorization["authorized"] is True and result.authorization["action_started"] is False
 
 
@@ -497,11 +498,12 @@ def test_attack_15_ledger_anchor_refusing_a_head_blocks_the_release(tmp_path, mo
 def test_known_limit_a_release_that_cannot_be_recorded_afterwards_is_flagged_not_hidden(tmp_path, mode):
     """After the callback has delivered, a failed final entry cannot undo the delivery.
 
-    The result says so ("released_unrecorded"). This documents the limit; it is not a block.
+    The result says so ("delivered_audit_incomplete"). This documents the limit; it is not a block.
     """
     s = build(tmp_path, ledger=BrokenLedger(lambda layer, status: status == "RELEASED"))
     result = run(s, mode, request(s))
-    assert result.released is True and result.release_outcome == "released_unrecorded"
+    assert result.released is True and result.release_outcome == "delivered_audit_incomplete"
+    assert result.audit_durable is False
     assert len(s.sink.calls) == 1
     assert [e.status for e in tap_entries(s)] == ["ATTEMPT", "RELEASING"]
 
@@ -520,7 +522,7 @@ def test_attack_17_a_failing_protected_callback_is_unconfirmed_and_returns_no_ou
     s = build(tmp_path, sink=sink)
     result = run(s, mode, request(s))
     assert result.released is False and result.output == "" and result.signature == {}
-    assert result.release_outcome == "unconfirmed"
+    assert result.release_outcome == "delivery_unknown"
     assert result.reason_code == "RELEASE_ACTION_FAILED"
     assert result.authorization["action_started"] is True, "delivery cannot be ruled out"
     assert tap_entries(s)[-1].status == "UNCONFIRMED"
@@ -661,7 +663,9 @@ def test_attack_22_a_file_backed_replay_store_survives_a_restart(tmp_path, mode)
     # "Restart": a new process would build all of this again from the same file.
     restarted = build(tmp_path, store=SQLiteReplayStore(db), clock=first.clock)
     result = run(restarted, mode, request(restarted, proof=grant, provider=None))
-    assert_not_released(restarted, result, "GRANT_REPLAYED", outcome="denied")
+    assert_not_released(restarted, result, "GRANT_REPLAYED", outcome="denied", ledger_deliveries=1)
+    # The durable ledger carried the first run's release across the restart.
+    assert [e.status for e in tap_entries(restarted)].count("RELEASED") == 1
 
 
 def test_attack_22_limit_an_in_memory_replay_store_forgets_a_grant_on_restart(tmp_path, mode):
@@ -689,7 +693,7 @@ def test_attack_22_the_grant_lifetime_bounds_the_memory_store_window(tmp_path, m
     first.clock.advance(seconds=121)
     restarted = build(tmp_path, store=SQLiteReplayStore(":memory:"), clock=first.clock)
     result = run(restarted, mode, request(restarted, proof=grant, provider=None))
-    assert_not_released(restarted, result, "GRANT_EXPIRED", outcome="denied")
+    assert_not_released(restarted, result, "GRANT_EXPIRED", outcome="denied", ledger_deliveries=1)
 
 
 # ------------------------------------------------ attacks 20 and 21: default and alternate paths
@@ -735,7 +739,7 @@ def test_an_allow_that_never_ran_the_protected_callback_is_not_a_release(tmp_pat
 
     s.tower.release_gate._enforcer = LyingEnforcer()
     result = run(s, mode, request(s))
-    assert_not_released(s, result, "ENFORCER_ERROR", outcome="held")
+    assert_not_released(s, result, "ENFORCER_ERROR", outcome="failed_before_delivery")
 
 
 def test_what_is_reported_released_is_what_was_delivered_even_if_the_result_is_touched_later(tmp_path, mode):
@@ -787,8 +791,8 @@ def test_a_sieve_breach_result_is_redacted_too_but_still_says_what_failed(tmp_pa
 def test_every_non_released_outcome_is_redacted(tmp_path, mode):
     s = build(tmp_path)
     s.status.on_call = lambda: setattr(s.captured[-1], "payload_out", "Tampered output.")
-    held = run(s, mode, request(s))  # authorized, aborted: outcome "held"
-    assert held.release_outcome == "held"
+    held = run(s, mode, request(s))  # authorized, aborted before delivery
+    assert held.release_outcome == "failed_before_delivery"
     assert_no_text(held)
     assert "Tampered" not in repr(held)
 
@@ -796,7 +800,7 @@ def test_every_non_released_outcome_is_redacted(tmp_path, mode):
     (tmp_path / "second").mkdir()
     s2 = build_again(tmp_path / "second", sink=ExplodingSink())
     unconfirmed = run(s2, mode, request(s2))
-    assert unconfirmed.release_outcome == "unconfirmed"
+    assert unconfirmed.release_outcome == "delivery_unknown"
     assert_no_text(unconfirmed)
 
 

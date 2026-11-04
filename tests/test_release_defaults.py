@@ -84,7 +84,7 @@ def test_a_tower_with_no_release_authority_holds_everything(mode):
     t = tower(release_sink=sink)
     result = run(t, mode)
     assert result.released is False and result.output == "" and result.signature == {}
-    assert result.release_outcome == "held"
+    assert result.release_outcome == "not_attempted"
     assert result.reason_code == ReleaseReason.NOT_CONFIGURED
     assert sink.calls == []
     assert result.sieve.payload_in == "" and result.sieve.payload_out == ""
@@ -120,7 +120,7 @@ def test_legacy_auto_still_works_when_chosen_and_says_it_authorized_nothing(mode
     result = run(t, mode)
     assert result.released and result.output == CLEAN and len(sink.calls) == 1
     assert result.authorization == {"kind": "legacy-capstone", "mode": "auto", "enforcer_authorized": False}
-    assert result.release_outcome == "released"
+    assert result.release_outcome == "released_legacy"
     tap = [e for e in t.ledger.entries if e.layer == "TAP"][-1]
     assert tap.extra["release_authority"] == "legacy-capstone:auto"
     assert tap.extra["enforcer_authorized"] is False
@@ -140,7 +140,7 @@ def test_a_legacy_sink_failure_is_unconfirmed_and_returns_no_output(mode):
     t = tower(capstone=ArchitectsProtocol(ReleaseMode.AUTO), release_sink=explode)
     result = run(t, mode)
     assert result.released is False and result.output == ""
-    assert result.release_outcome == "unconfirmed"
+    assert result.release_outcome == "delivery_unknown"
     assert result.reason_code == ReleaseReason.ACTION_FAILED
 
 
