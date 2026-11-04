@@ -18,6 +18,8 @@ Release boundary. Behavior changes for existing callers are marked BREAKING.
 - Tests: adversarial release suite, default and structure tests, ledger tests.
 
 ### Changed
+- Ledger gate entries record the gate code and the number of findings in `detail`,
+  not the matched text of each finding. Matched text is payload text.
 - BREAKING: a `TowerResult` whose output was withheld carries `sieve.redacted()`:
   `payload_in`, `payload_out`, each gate's payloads and the matched text of
   findings and flags are blanked. Verdict, score, gate, offsets and counts are kept.

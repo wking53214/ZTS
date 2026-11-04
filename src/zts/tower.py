@@ -261,10 +261,14 @@ class DeterministicIntegrityTower:
 
     def _log_sieve(self, result: SieveResult) -> None:
         for gate_result in result.gates:
+            # The gate, verdict and number of findings. Never the matched text: the
+            # ledger holds keyed fingerprints of payloads, and a matched fragment is
+            # payload text.
+            count = len(gate_result.findings)
             self.ledger.log(
                 gate_result.gate.value.gate_id,
                 gate_result.verdict.value.upper(),
-                "; ".join(f.evidence for f in gate_result.findings) or gate_result.gate.value.code,
+                f"{gate_result.gate.value.code}: {count} finding(s)" if count else gate_result.gate.value.code,
                 gate_result.payload_out,
                 elapsed_ns=gate_result.elapsed_ns,
             )

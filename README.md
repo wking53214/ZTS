@@ -220,8 +220,8 @@ Numbers above are from one run on one machine. Run `zts bench` for yours.
 ## Tests
 
 ```bash
-pytest        # 307 pass, 2 skip without cns or enforcer installed
-pytest        # 507 pass with `pip install -e ".[dev,cns,enforcer]"`
+pytest        # 309 pass, 2 skip without cns or enforcer installed
+pytest        # 509 pass with `pip install -e ".[dev,cns,enforcer]"`
 ```
 
 The two skips are the CNS connector tests and the release-boundary suite. CI runs

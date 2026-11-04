@@ -272,14 +272,12 @@ development, tests and existing callers. They are never selected implicitly:
 3. **Replay durability depends on the store the deployment passes in**, and ZTS
    cannot check it. An in-memory store reopens a replay window after a restart.
 4. **Multi-host replay protection is not provided.**
-5. **Matched fragments still reach the ledger.** A result whose output was withheld
-   carries `sieve.redacted()`: no payload text, no per-gate payload text, and the
-   matched text of findings and flags replaced by `[redacted]` (verdict, score,
-   gate, offsets and codes are kept). But the ledger's gate entries, written
-   before the release decision and unchanged by this work, record each finding's
-   matched fragment in their `detail` (for example `may`, `As an AI`). Those are
-   short matches, not the payload, but a reader of the ledger can see them.
-   `payload_in` on a released result is also kept as is.
+5. **A released result keeps its full sieve record**, including `payload_in` (the
+   text before filtering) and the matched text of findings. Only results whose
+   output was withheld are redacted: `sieve.redacted()` blanks the payloads and
+   replaces matched text with `[redacted]`, keeping verdict, score, gate, offsets
+   and codes. The ledger never holds matched text: its gate entries record the
+   gate, verdict and number of findings.
 6. **ZTS does not authenticate the identity it is given.** It binds the
    artifact to the CNS digest of whatever `IdentityContext` the caller supplies.
    Whether that identity is the true caller is the identity layer's problem, and
