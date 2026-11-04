@@ -8,6 +8,19 @@ deleted or edited entry breaks verification. This is a tamper-evidence
 mechanism, not a tamper-proof one. Anyone who can write the ledger can rebuild
 the whole chain. It detects accidental corruption and casual editing; it does
 not defend against an attacker with write access.
+
+Two properties were added for the release boundary, and their limits are stated
+here so nothing downstream claims more:
+
+  * Writes are serialized by a lock, so concurrent callers in one process cannot
+    fork the chain (two entries with one sequence number or one predecessor).
+    The lock is per ledger object and per process. It says nothing about two
+    processes writing one store, and this ledger has no store.
+  * An optional :class:`LedgerAnchor` receives the new head before each entry is
+    appended. A ledger whose anchor lives outside the writer's control can tell
+    a truncated or replaced chain from the real one (:meth:`ValLedger.verify_anchored`).
+    ZTS ships the interface only. Whoever can also write the anchor can rewrite
+    both, and the ledger is held in memory, so it is lost when the process ends.
 """
 
 from __future__ import annotations
@@ -17,10 +30,11 @@ import hmac
 import json
 import os
 import secrets
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 GENESIS = "0" * 64
 
@@ -28,6 +42,26 @@ def default_key_path() -> Path:
     """Where the ledger key lives by default: ~/.config/zts/ledger.key (or $XDG_CONFIG_HOME)."""
     base = os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
     return Path(base) / "zts" / "ledger.key"
+
+
+class LedgerAnchorError(RuntimeError):
+    """The external anchor refused or lost a head, so the entry was not appended."""
+
+
+@runtime_checkable
+class LedgerAnchor(Protocol):
+    """Somewhere outside the ledger's writer that retains the latest head.
+
+    ``publish`` must durably record ``(sequence, head)`` or raise. ``latest``
+    returns the most recent pair it holds, or None if it holds nothing. The
+    protocol provides no security by itself: an anchor the writer can rewrite
+    anchors nothing. Production needs one the writer cannot (an append-only
+    service, a separate trust domain). None is bundled.
+    """
+
+    def publish(self, sequence: int, head: str) -> None: ...
+
+    def latest(self) -> tuple[int, str] | None: ...
 
 
 class LedgerKeyError(RuntimeError):
@@ -78,10 +112,17 @@ class ValLedger:
     without the key.
     """
 
-    def __init__(self, key: bytes | None = None, key_id: str | None = None) -> None:
+    def __init__(
+        self,
+        key: bytes | None = None,
+        key_id: str | None = None,
+        anchor: LedgerAnchor | None = None,
+    ) -> None:
         self._key = key or secrets.token_bytes(32)
         self.key_id = key_id or key_id_for(self._key)
         self._entries: list[LedgerEntry] = []
+        self._anchor = anchor
+        self._lock = threading.RLock()
 
     def __len__(self) -> int:
         return len(self._entries)
@@ -91,11 +132,13 @@ class ValLedger:
 
     @property
     def entries(self) -> list[LedgerEntry]:
-        return list(self._entries)
+        with self._lock:
+            return list(self._entries)
 
     @property
     def head(self) -> str:
-        return self._entries[-1].digest if self._entries else GENESIS
+        with self._lock:
+            return self._entries[-1].digest if self._entries else GENESIS
 
     def log(
         self,
@@ -105,20 +148,28 @@ class ValLedger:
         payload: str = "",
         **extra: Any,
     ) -> LedgerEntry:
-        entry = LedgerEntry(
-            sequence=len(self._entries),
-            timestamp=time.time(),
-            layer=layer,
-            status=status,
-            detail=detail,
-            payload_digest=self._fingerprint(payload),
-            previous=self.head,
-            extra=dict(extra),
-            key_id=self.key_id,
-        )
-        entry.digest = entry.compute_digest()
-        self._entries.append(entry)
-        return entry
+        with self._lock:
+            entry = LedgerEntry(
+                sequence=len(self._entries),
+                timestamp=time.time(),
+                layer=layer,
+                status=status,
+                detail=detail,
+                payload_digest=self._fingerprint(payload),
+                previous=self.head,
+                extra=dict(extra),
+                key_id=self.key_id,
+            )
+            entry.digest = entry.compute_digest()
+            if self._anchor is not None:
+                # Publish first. If the anchor fails, nothing is appended, so
+                # the ledger never holds an entry the anchor has not seen.
+                try:
+                    self._anchor.publish(entry.sequence, entry.digest)
+                except Exception as exc:
+                    raise LedgerAnchorError("the ledger anchor did not accept the head") from exc
+            self._entries.append(entry)
+            return entry
 
     def _fingerprint(self, payload: str) -> str:
         return hmac.new(self._key, payload.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -135,7 +186,7 @@ class ValLedger:
         when the chain no longer ends there.
         """
         previous = GENESIS
-        for entry in self._entries:
+        for entry in self.entries:
             if entry.previous != previous:
                 return False, f"entry {entry.sequence}: broken link"
             if entry.digest != entry.compute_digest():
@@ -145,9 +196,40 @@ class ValLedger:
             return False, "head mismatch: chain truncated or replaced"
         return True, "chain intact"
 
+    def verify_anchored(self) -> tuple[bool, str]:
+        """Walk the chain, then compare it with the head the anchor retained.
+
+        Fails when there is no anchor, when the anchor holds nothing for a
+        non-empty ledger, or when the chain no longer contains the anchored
+        entry at the anchored position. That catches truncation and
+        replacement for as long as the anchor itself is out of the writer's
+        reach. It does not catch entries appended after the last publish by a
+        writer that skips the anchor, and it proves nothing about an anchor
+        the attacker controls.
+        """
+        if self._anchor is None:
+            return False, "no anchor configured"
+        ok, reason = self.verify()
+        if not ok:
+            return False, reason
+        try:
+            latest = self._anchor.latest()
+        except Exception:
+            return False, "anchor unavailable"
+        with self._lock:
+            entries = list(self._entries)
+        if latest is None:
+            return (False, "anchor holds no head") if entries else (True, "empty ledger, empty anchor")
+        sequence, head = latest
+        if not isinstance(sequence, int) or sequence < 0 or sequence >= len(entries):
+            return False, "chain is shorter than the anchored head: truncated"
+        if entries[sequence].digest != head:
+            return False, "anchored head not found at its position: chain replaced"
+        return True, "chain intact and contains the anchored head"
+
     def to_jsonl(self) -> str:
         return "\n".join(
-            json.dumps(asdict(e), sort_keys=True) for e in self._entries
+            json.dumps(asdict(e), sort_keys=True) for e in self.entries
         )
 
 
@@ -238,6 +320,8 @@ def signature_block(payload: str, key: bytes, key_id: str | None = None) -> dict
 __all__ = [
     "ValLedger",
     "LedgerEntry",
+    "LedgerAnchor",
+    "LedgerAnchorError",
     "LedgerKeyError",
     "checksum",
     "verify_legacy_checksum",
