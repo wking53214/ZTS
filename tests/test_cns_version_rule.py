@@ -1,8 +1,9 @@
 """The CNS version rule: a floor within one major version, never one exact release.
 
-The dock once demanded exactly CNS 1.4.0 and raised on every later release,
-1.7.0 and the current 1.9.0 included. These tests pin the rule so that cannot
-come back. They do not need CNS: the dock is pointed at stand-in ``cns``
+The dock once demanded exactly CNS 1.4.0 and raised on every later release.
+Its floor then stayed at 1.4.0 after the package pinned CNS 2.3.0, so the dock
+refused the very release ZTS pins. The floor is now the pinned release, 2.3.0.
+These tests pin the rule so neither can come back. They do not need CNS: the dock is pointed at stand-in ``cns``
 modules declaring whatever version a test asks for, so they never skip.
 """
 import sys
@@ -41,15 +42,15 @@ def stand_in_cns(monkeypatch, version):
 
 
 def test_the_floor_is_the_release_the_seam_was_frozen_against():
-    assert CNS_CONTRACT_VERSION == "1.4.0"
+    assert CNS_CONTRACT_VERSION == "2.3.0"
 
 
-@pytest.mark.parametrize("version", ["1.4.0", "1.4.1", "1.5.0", "1.7.0", "1.8.0", "1.9.0", "1.10.0", "1.40.2"])
+@pytest.mark.parametrize("version", ["2.3.0", "2.3.1", "2.4.0", "2.10.0", "2.40.2"])
 def test_every_release_of_the_same_major_at_or_above_the_floor_is_accepted(version):
     assert cns_version_supported(version)
 
 
-@pytest.mark.parametrize("version", ["1.3.9", "1.0.0", "0.9.0", "0.2.0", "2.0.0", "3.1.0"])
+@pytest.mark.parametrize("version", ["1.9.0", "1.4.0", "1.3.9", "0.9.0", "2.2.9", "2.0.0", "3.1.0"])
 def test_a_release_below_the_floor_or_of_another_major_is_refused(version):
     assert not cns_version_supported(version)
 
@@ -59,7 +60,7 @@ def test_a_version_that_is_not_plain_x_y_z_is_refused(version):
     assert not cns_version_supported(version)
 
 
-@pytest.mark.parametrize("version", ["1.4.0", "1.7.0", "1.9.0", "1.10.0"])
+@pytest.mark.parametrize("version", ["2.3.0", "2.4.0", "2.10.0"])
 def test_connect_accepts_a_later_release_and_records_it(monkeypatch, version):
     stand_in_cns(monkeypatch, version)
     dock = CNSDock()
@@ -69,7 +70,7 @@ def test_connect_accepts_a_later_release_and_records_it(monkeypatch, version):
     assert dock.to_zts_artifact(identity).cns_contract_version == version
 
 
-@pytest.mark.parametrize("version", ["1.3.0", "2.0.0", None, "1.9.0rc1"])
+@pytest.mark.parametrize("version", ["1.9.0", "2.2.0", "3.0.0", None, "2.3.0rc1"])
 def test_connect_refuses_an_unsupported_release(monkeypatch, version):
     stand_in_cns(monkeypatch, version)
     with pytest.raises(CNSContractError, match="incompatible CNS version"):
