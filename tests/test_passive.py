@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from zts import Flag
+from zts.capstone import ArchitectsProtocol, ReleaseMode
 from zts.passive import passive_flags
 from zts.profiles import DEFAULT, EXEC, LEGAL, OPS
 from zts.result import Verdict
@@ -61,7 +62,9 @@ class TestNoEffectOnDecisions:
             assert ZeroTrustSieve(profile).run(PASSIVE).payload_out == PASSIVE
 
     def test_tower_releases_passive_payload_unchanged(self):
-        result = DeterministicIntegrityTower("ops", hmac_key=b"k" * 32).enforce(PASSIVE)
+        result = DeterministicIntegrityTower(
+            "ops", hmac_key=b"k" * 32, capstone=ArchitectsProtocol(ReleaseMode.AUTO)
+        ).enforce(PASSIVE)
         assert result.released
         assert result.output == PASSIVE
 

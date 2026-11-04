@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from .gates import Gate
+
+
+#: Stands in for matched or payload text in a redacted result.
+REDACTED = "[redacted]"
 
 
 class Verdict(Enum):
@@ -108,6 +112,30 @@ class SieveResult:
     def elapsed_ms(self) -> float:
         return self.elapsed_ns / 1_000_000
 
+    def redacted(self) -> "SieveResult":
+        """A copy with no payload text in it: for results whose output was withheld.
+
+        Blanks the payload before and after, each gate's payload before and
+        after, and the matched text of every finding and flag. Keeps what a
+        diagnosis needs: verdict, score, gate, offsets, codes and counts.
+        """
+        gates = [
+            replace(
+                g,
+                payload_in="",
+                payload_out="",
+                findings=[replace(f, evidence=REDACTED) for f in g.findings],
+            )
+            for g in self.gates
+        ]
+        return replace(
+            self,
+            payload_in="",
+            payload_out="",
+            gates=gates,
+            flags=[replace(f, evidence=REDACTED) for f in self.flags],
+        )
+
     def summary(self) -> str:
         """One-line human summary."""
         where = f" at {self.breached_at.value}" if self.breached_at else ""
@@ -124,6 +152,9 @@ class SieveResult:
 class TowerResult:
     """Outcome of a full Deterministic Integrity Tower run."""
 
+    #: The sieve record. When the output was withheld (`released` is False) this
+    #: is `sieve.redacted()`: it carries no payload text, so a held result cannot
+    #: be used to read what was held.
     sieve: SieveResult
     #: Final payload after capstone handling.
     output: str
@@ -139,6 +170,22 @@ class TowerResult:
     #: Rewrite attempts consumed.
     attempts: int = 1
     elapsed_ns: int = 0
+    #: What happened at the release boundary: "released", "held" (nothing was
+    #: authorized or nothing was attempted), "denied" (an authorization check said
+    #: no), "unconfirmed" (authorized, and the release action began but did not
+    #: finish, so delivery cannot be ruled out), or "released_unrecorded"
+    #: (released, and the final ledger entry could not be written). "" only on
+    #: results built outside the tower.
+    release_outcome: str = ""
+    #: Stable code for the outcome: an Enforcer reason code or a ZTS code from
+    #: zts.release.ReleaseReason. "" when the capstone released or held on its own.
+    reason_code: str = ""
+    #: The release identifier the authorization was bound to, if one was supplied.
+    release_id: str = ""
+    #: Non-secret evidence of the authorization decision (subject digest, decision
+    #: reason, verifier ids, timestamps). {} when no authorization was attempted.
+    #: Evidence of a decision, never a grant: nothing may treat it as permission.
+    authorization: dict[str, object] = field(default_factory=dict)
 
     @property
     def elapsed_ms(self) -> float:
@@ -156,4 +203,5 @@ __all__ = [
     "GateResult",
     "SieveResult",
     "TowerResult",
+    "REDACTED",
 ]

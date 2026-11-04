@@ -150,7 +150,7 @@ class TestLogicCornerstone:
 
 class TestTowerSync:
     def test_clean_payload_is_released(self):
-        result = DeterministicIntegrityTower("ops").enforce(CLEAN)
+        result = DeterministicIntegrityTower("ops", capstone=ArchitectsProtocol(ReleaseMode.AUTO)).enforce(CLEAN)
         assert result.released
         assert result.output == CLEAN
         assert result.checksum
@@ -186,8 +186,8 @@ class TestTowerSync:
         assert tower.ledger.verify()[0]
 
     def test_hmac_key_is_per_instance_by_default(self):
-        a = DeterministicIntegrityTower("ops").enforce(CLEAN).checksum
-        b = DeterministicIntegrityTower("ops").enforce(CLEAN).checksum
+        a = DeterministicIntegrityTower("ops", capstone=ArchitectsProtocol(ReleaseMode.AUTO)).enforce(CLEAN).checksum
+        b = DeterministicIntegrityTower("ops", capstone=ArchitectsProtocol(ReleaseMode.AUTO)).enforce(CLEAN).checksum
         assert a != b, "a shared hardcoded key would authenticate nothing"
 
 
@@ -200,7 +200,7 @@ class TestTowerAsync:
             return DIRTY if len(attempts) < 2 else CLEAN
 
         tower = DeterministicIntegrityTower(
-            "ops", governor=KineticGovernor(ceiling_seconds=0.001)
+            "ops", governor=KineticGovernor(ceiling_seconds=0.001), capstone=ArchitectsProtocol(ReleaseMode.AUTO)
         )
         result = asyncio.run(tower.run("report status", generator))
         assert result.attempts == 2
@@ -256,6 +256,7 @@ class TestTowerAsync:
         tower = DeterministicIntegrityTower(
             "ops",
             governor=KineticGovernor(floor_seconds=0.05, ceiling_seconds=0.05),
+            capstone=ArchitectsProtocol(ReleaseMode.AUTO),
         )
         started = time.perf_counter()
         result = asyncio.run(tower.run("x", generator))

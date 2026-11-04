@@ -5,6 +5,7 @@ import hmac
 import json
 
 from zts import DeterministicIntegrityTower
+from zts.capstone import ArchitectsProtocol, ReleaseMode
 from zts.ledger import (
     GENESIS,
     SIGNATURE_ALGORITHM,
@@ -43,7 +44,7 @@ def test_key_id_defaults_to_a_derived_id_that_is_not_the_key():
 
 
 def test_released_result_carries_the_signature_block():
-    tower = DeterministicIntegrityTower("ops", hmac_key=KEY)
+    tower = DeterministicIntegrityTower("ops", hmac_key=KEY, capstone=ArchitectsProtocol(ReleaseMode.AUTO))
     result = tower.enforce(CLEAN)
     assert result.released
     assert result.signature["algorithm"] == "hmac-sha256"

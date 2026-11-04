@@ -60,3 +60,32 @@ jobs:
         env:
           ZTS_REQUIRE_CNS: "1"
         run: python -m pytest tests/ -q -rs
+
+  enforcer:
+    # The release boundary against the real CNS and the real Enforcer. Both
+    # REQUIRE flags turn a missing package into a failure, so the adversarial
+    # suite cannot silently skip here.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package with the dev, cns and enforcer extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,cns,enforcer]"
+          python -m pip show cns tack-enforcer
+
+      - name: Run the test suite with CNS and Enforcer present
+        env:
+          ZTS_REQUIRE_CNS: "1"
+          ZTS_REQUIRE_ENFORCER: "1"
+        run: python -m pytest tests/ -q -rs

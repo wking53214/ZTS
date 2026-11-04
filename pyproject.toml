@@ -24,6 +24,9 @@ dependencies = []
 dev = ["pytest>=7.4"]
 # Optional: the CNS dock (zts.cns). Nothing else in ZTS imports CNS, and ZTS runs without it.
 cns = ["cns @ git+https://github.com/wking53214/CNS.git@v2.3.0"]
+# Optional: the Enforcer release adapter (zts.release). Pinned to a commit because
+# Enforcer publishes no tags and is a 0.1.0 prototype. Needs the cns extra as well.
+enforcer = ["tack-enforcer @ git+https://github.com/wking53214/Enforcer.git@3ff6a56a0c417a83e3b002feed6bdec4175454f3"]
 
 [project.scripts]
 zts = "zts.cli:main"

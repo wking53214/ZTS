@@ -7,8 +7,13 @@ out-of-band signal from a human.
 Why this is the interesting gate. Everything below it is a filter, and a filter
 can be wrong. G7 is the acknowledgment that an automated stack should not be
 the last thing standing between a generated payload and its consumer. Whether
-that trade is worth making depends entirely on what the payload is for, which
-is why the default is AUTO and the strict modes are opt-in.
+that trade is worth making depends entirely on what the payload is for.
+
+AUTO is a legacy, development and test mode. It performs no authorization: it
+releases whatever cleared the array. Nothing selects it implicitly. The tower
+has no default capstone (it holds everything until a release authority is
+configured), and this class defaults to SEALED. The production release path is
+the Enforcer adapter in zts.release, which this class is not part of.
 
 The earlier private version released whenever the presented signature equalled
 a literal string written into the source, which is a hardcoded password in
@@ -29,7 +34,8 @@ from enum import Enum
 class ReleaseMode(Enum):
     """How the capstone decides."""
 
-    #: Release anything that cleared the array. No human in the loop.
+    #: LEGACY, DEVELOPMENT AND TEST ONLY. Releases anything that cleared the
+    #: array, with no authorization. Must be chosen explicitly; never a default.
     AUTO = "auto"
     #: Hold unless a matching authority token is presented.
     HANDSHAKE = "handshake"
@@ -51,7 +57,7 @@ class ArchitectsProtocol:
 
     def __init__(
         self,
-        mode: ReleaseMode | str = ReleaseMode.AUTO,
+        mode: ReleaseMode | str = ReleaseMode.SEALED,
         authority: str | None = None,
         approver: Callable[[str], bool] | None = None,
     ) -> None:
@@ -72,7 +78,9 @@ class ArchitectsProtocol:
     ) -> ReleaseDecision:
         """Decide whether `payload` may be released."""
         if self.mode is ReleaseMode.AUTO:
-            return ReleaseDecision(True, self.mode, "auto-release: no handshake configured")
+            return ReleaseDecision(
+                True, self.mode, "auto-release: legacy mode, no authorization performed"
+            )
 
         if self.mode is ReleaseMode.SEALED:
             return ReleaseDecision(False, self.mode, "sealed: release is disabled")

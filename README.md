@@ -6,9 +6,12 @@ rejects a payload before an expensive semantic one has to look at it.
 
 It removes first-person voice, hedging, flattery, and affect vocabulary from
 generated text; it detects attempts to overwrite its own governing
-instructions; and it hands the result to a capstone that releases it
-automatically by default (`ReleaseMode.AUTO`) or, when HANDSHAKE, CALLBACK or
-SEALED is supplied, holds it until something outside the pipeline authorizes it.
+instructions; and it hands the result to a release boundary that holds it until
+something outside the pipeline authorizes that exact release. In production that
+is an [Enforcer](https://github.com/wking53214/Enforcer) grant, checked at the
+point of release. With nothing configured, nothing is released. The legacy
+modes (`ReleaseMode.AUTO` and the others) still exist but must be chosen
+explicitly; see [docs/RELEASE_BOUNDARY.md](docs/RELEASE_BOUNDARY.md).
 
 ```
                     [ INGESTION PERIMETER ]
@@ -44,7 +47,9 @@ SEALED is supplied, holds it until something outside the pipeline authorizes it.
 pip install -e .
 ```
 
-No dependencies. Python 3.11+.
+No dependencies. Python 3.11+. Two optional extras: `.[cns]` (the CNS identity
+dock, CNS `v2.3.0`) and `.[enforcer]` (the release adapter's Enforcer, pinned to a
+commit). The release boundary needs both.
 
 ## Use
 
@@ -83,7 +88,9 @@ ZeroTrustSieve("ops", mode="repair").run(text).payload_out
 ZeroTrustSieve("ops", mode="reject").run(text).breached_at
 ```
 
-Wrap a generator and let it retry against the specific constraints it violated:
+Wrap a generator and let it retry against the specific constraints it violated.
+Note what a bare tower does with the result: it holds it. Releasing requires a
+release authority (see "Releasing output" below).
 
 ```python
 import asyncio
@@ -91,10 +98,39 @@ from zts import DeterministicIntegrityTower
 
 tower = DeterministicIntegrityTower("ops")
 result = asyncio.run(tower.run("Summarize last night's incident.", my_llm_call))
-result.output       # released text, or '' if held
-result.attempts     # rewrite rounds consumed
+result.output          # '' : no release authority is configured, so nothing is released
+result.release_outcome # 'held'
+result.reason_code     # 'RELEASE_NOT_CONFIGURED'
+result.attempts        # rewrite rounds consumed
 tower.ledger.verify()  # (True, 'chain intact')
 ```
+
+## Releasing output
+
+Output is released only through a configured authority. Production uses Enforcer:
+
+```python
+from zts import DeterministicIntegrityTower, EnforcerReleaseGate, ReleaseRequest
+tower = DeterministicIntegrityTower(
+    "ops",
+    release_gate=EnforcerReleaseGate(configured_enforcer, policy_version="2026-11-policy-3"),
+    require_enforcer=True,
+)
+result = tower.enforce(text, release=ReleaseRequest(identity=..., artifact=..., release_id=..., scope=..., proof_provider=...))
+```
+
+The release is the callback Enforcer guards, so a denied release has no output and
+never reaches the delivery hook. The grant must be bound to the CNS subject digest,
+the exact artifact, the operation, the scope, the release id and the policy
+version. Replayed, expired, stale, revoked or mismatched grants are denied. Read
+[docs/RELEASE_BOUNDARY.md](docs/RELEASE_BOUNDARY.md) before relying on this: it
+lists what is checked, what is not, and the unresolved risks (no production
+verifier ships, the ledger is in memory, replay durability depends on the store
+you pass in).
+
+Existing callers that relied on the tower releasing by default must now choose a
+legacy mode explicitly: `DeterministicIntegrityTower("ops", capstone=ArchitectsProtocol(ReleaseMode.AUTO))`.
+That performs no authorization and cannot be combined with `require_enforcer=True`.
 
 ## CLI
 
@@ -121,9 +157,10 @@ zts scrub --strict "..." || echo "breached" # exit 1 on breach, for CI
 | G7 | TAP | The Architect's Protocol | manual | hold or release |
 
 Execution order is `G6 → G3 → G1 → G5 → G2 → G4`, sorted by cost. `G7` is the
-capstone. Under the default `ReleaseMode.AUTO` it releases anything that cleared
-the array; supply HANDSHAKE, CALLBACK or SEALED to require a signal from outside
-the pipeline. See [ARCHITECTURE.md](ARCHITECTURE.md).
+capstone. The tower has no default release authority and holds everything until
+one is configured. Production uses the Enforcer gate; the legacy `AUTO`,
+`HANDSHAKE`, `CALLBACK` and `SEALED` capstones are explicit opt-ins. See
+[ARCHITECTURE.md](ARCHITECTURE.md) and [docs/RELEASE_BOUNDARY.md](docs/RELEASE_BOUNDARY.md).
 
 ## Profiles
 
@@ -183,8 +220,13 @@ Numbers above are from one run on one machine. Run `zts bench` for yours.
 ## Tests
 
 ```bash
-pytest        # 196 tests
+pytest        # 307 pass, 2 skip without cns or enforcer installed
+pytest        # 507 pass with `pip install -e ".[dev,cns,enforcer]"`
 ```
+
+The two skips are the CNS connector tests and the release-boundary suite. CI runs
+them with `ZTS_REQUIRE_CNS=1` and `ZTS_REQUIRE_ENFORCER=1`, where a missing package
+is a failure.
 
 ## What this is
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from zts.capstone import ArchitectsProtocol, ReleaseMode
 from zts.ledger import ValLedger
 from zts.tower import DeterministicIntegrityTower
 
@@ -55,7 +56,7 @@ class TestChainUnchanged:
 class TestTowerUsesItsKey:
     def test_tower_ledger_fingerprint_matches_released_output(self):
         key = b"t" * 32
-        tower = DeterministicIntegrityTower("ops", hmac_key=key)
+        tower = DeterministicIntegrityTower("ops", hmac_key=key, capstone=ArchitectsProtocol(ReleaseMode.AUTO))
         result = tower.enforce(CLEAN)
         assert result.released
         last = tower.ledger.entries[-1]

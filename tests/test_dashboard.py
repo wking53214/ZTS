@@ -24,7 +24,7 @@ class TestCounting:
 
     def test_released_run_is_counted(self):
         dash = TelemetryDashboard()
-        DeterministicIntegrityTower("ops", dashboard=dash).enforce(CLEAN)
+        DeterministicIntegrityTower("ops", dashboard=dash, capstone=ArchitectsProtocol(ReleaseMode.AUTO)).enforce(CLEAN)
         snap = dash.snapshot()
         assert snap["total_runs"] == 1
         assert snap["released"] == 1

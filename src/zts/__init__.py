@@ -32,6 +32,13 @@ from .gates import (
 from .governor import Budget, KineticGovernor
 from .ledger import LedgerEntry, ValLedger
 from .normalizer import StructureNormalizer
+from .release import (
+    EnforcerReleaseGate,
+    ReleaseCandidate,
+    ReleaseOutcome,
+    ReleaseReason,
+    ReleaseRequest,
+)
 from .profiles import PROFILES, Profile
 from .profiles import get as get_profile
 from .result import Finding, Flag, GateResult, SieveResult, TowerResult, Verdict
@@ -82,6 +89,11 @@ __all__ = [
     "ArchitectsProtocol",
     "ReleaseMode",
     "ReleaseDecision",
+    "EnforcerReleaseGate",
+    "ReleaseRequest",
+    "ReleaseCandidate",
+    "ReleaseOutcome",
+    "ReleaseReason",
     "StructureNormalizer",
     # config
     "Profile",

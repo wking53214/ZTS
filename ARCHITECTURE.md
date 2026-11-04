@@ -74,13 +74,23 @@ tripped, which is exactly why it runs first.
 The capstone. A payload that clears G1 through G6 is not released; it is held,
 and release requires a signal the pipeline cannot generate for itself.
 
-Four modes: `AUTO` (release anything clean), `HANDSHAKE` (require a matching
+The production release authority is the Enforcer gate (`zts.release`): output is
+released only inside Enforcer's guarded call, after it allows this exact artifact,
+subject, operation, scope, release id and policy version. See
+[docs/RELEASE_BOUNDARY.md](docs/RELEASE_BOUNDARY.md) for the boundary, what is
+checked and when, and the unresolved risks.
+
+The legacy capstone has four modes, each an explicit opt-in: `AUTO` (release
+anything clean, no authorization performed), `HANDSHAKE` (require a matching
 authority token, compared in constant time), `CALLBACK` (defer to a supplied
-approver), and `SEALED` (never release).
+approver), and `SEALED` (never release). With no authority configured at all the
+tower holds everything, and `ArchitectsProtocol()` with no argument is `SEALED`.
 
 G7 is the one gate whose value is architectural rather than mechanical. It is
 the acknowledgment that a filter can be wrong and that an automated stack
-should not be the last thing between generated text and its consumer.
+should not be the last thing between generated text and its consumer. Earlier
+versions defaulted to `AUTO`, which made that acknowledgment optional; the
+default is now to hold.
 
 ## Fail-fast ordering
 
@@ -155,6 +165,15 @@ rebuild the chain. It catches accidental corruption and casual editing. It does
 not defend against an attacker, and the archive's description of it as an
 integrity guarantee overstated what a hash chain in the same process as its
 writer can provide.
+
+Writes are serialized by a lock, so threads in one process cannot fork the chain.
+An optional `LedgerAnchor` receives each head before its entry is appended and
+`verify_anchored()` checks the chain against it, which catches truncation and
+replacement only while the anchor is out of the writer's reach. The ledger is in
+memory and no operational anchor ships. For an Enforcer release it records the
+CNS subject digest, release id, operation, scope, policy version, the Enforcer
+decision's identifiers and reason, and the outcome. Details and limits are in
+[docs/RELEASE_BOUNDARY.md](docs/RELEASE_BOUNDARY.md).
 
 ## Scoring
 

@@ -7,6 +7,7 @@ import stat
 
 import pytest
 
+from zts.capstone import ArchitectsProtocol, ReleaseMode
 from zts.ledger import LedgerKeyError, default_key_path, load_or_create_ledger_key
 from zts.tower import DeterministicIntegrityTower
 
@@ -50,7 +51,7 @@ class TestTowerDefaultsToKeyFile:
         assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
 
     def test_fingerprints_still_match_after_a_restart(self):
-        first = DeterministicIntegrityTower("ops")
+        first = DeterministicIntegrityTower("ops", capstone=ArchitectsProtocol(ReleaseMode.AUTO))
         result = first.enforce(CLEAN)
         entry = first.ledger.entries[-1]
 
@@ -58,8 +59,8 @@ class TestTowerDefaultsToKeyFile:
         assert restarted.ledger.payload_matches(entry, result.output)
 
     def test_ledger_key_does_not_depend_on_the_release_key(self):
-        a = DeterministicIntegrityTower("ops", hmac_key=b"a" * 32)
-        b = DeterministicIntegrityTower("ops", hmac_key=b"b" * 32)
+        a = DeterministicIntegrityTower("ops", hmac_key=b"a" * 32, capstone=ArchitectsProtocol(ReleaseMode.AUTO))
+        b = DeterministicIntegrityTower("ops", hmac_key=b"b" * 32, capstone=ArchitectsProtocol(ReleaseMode.AUTO))
         out_a = a.enforce(CLEAN)
         out_b = b.enforce(CLEAN)
         assert out_a.output == out_b.output == CLEAN
