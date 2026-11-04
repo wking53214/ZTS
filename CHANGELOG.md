@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### Production hardening of the release boundary (second pass)
+
+Added:
+- `zts.ledger_store`: `FileLedgerStore` (append-only JSONL, fsync per entry, cross-process `flock`,
+  torn-write recovery, refusal to auto-heal corruption) and `FileLedgerAnchor`. `ValLedger(store=)`,
+  `.durable`, `.anchored`, `.recovery`.
+- `ReleaseState`: the six release states and their facts. `TowerResult.delivery_verified`,
+  `TowerResult.audit_durable`.
+- `DeterministicIntegrityTower(delivery_confirmer=, confirm_timeout=, ledger=, production=)`: success
+  now needs the receiving side's confirmation when a confirmer is configured.
+- `EnforcerReleaseGate(timeout=)`: bounds the grant provider and the Enforcer call; an abandoned call
+  can never deliver late. `ReleaseOutcome.grant_state`.
+- `run()` releases on a worker thread (the event loop is no longer blocked) with cooperative
+  cancellation. `close()`, `TowerClosedError`, `inflight`.
+- `zts.ops`: `ReleaseMetrics`, structured audit events on the `zts.release` logger,
+  `tower.readiness()`, `tower.health()`, `ProductionConfigError`.
+- `docs/PRODUCTION_READINESS.md` (decisions required), `docs/OPERATIONS.md`.
+
+Changed (BREAKING for anything built on the previous unreleased commit):
+- `release_outcome` values: `released` is now `delivered`, `delivered_unverified` or
+  `delivered_audit_incomplete`; `held` is `not_attempted` or `failed_before_delivery`;
+  `unconfirmed` is `delivery_unknown`; `released_unrecorded` is `delivered_audit_incomplete`;
+  legacy releases are `released_legacy`.
+- A tower's release controls are read-only after construction.
+- An in-memory ledger can no longer yield `delivered`.
+
+Fixed:
+- A `require_enforcer` tower could be turned into a legacy-AUTO tower by assigning two attributes.
+- `run()` blocked the event loop for as long as any provider, sink or Enforcer call took, and
+  ignored cancellation.
+- Success was reported when the delivery callback returned, with no independent check.
+
+Existing tests edited: `tests/test_release_boundary.py`, `tests/test_release_defaults.py` and
+`tests/release_kit.py` (outcome names and the kit's default ledger), all from the previous unreleased
+commit.
+
 Release boundary. Behavior changes for existing callers are marked BREAKING.
 
 ### Added

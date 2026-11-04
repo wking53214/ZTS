@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+import threading
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -50,14 +51,28 @@ from .gates import Gate
 from .governor import KineticGovernor
 from .ledger import ValLedger, key_id_for, load_or_create_ledger_key, signature_block
 from .normalizer import StructureNormalizer, tidy
+from .ops import (
+    FAIL,
+    ProductionConfigError,
+    ReadinessReport,
+    ReleaseMetrics,
+    audit_event,
+    check_configuration,
+    check_runtime,
+    log_event,
+)
 from .profiles import Profile
 from .profiles import get as get_profile
 from .release import (
+    NOT_ATTEMPTED_REASONS,
     EnforcerReleaseGate,
     ReleaseAbort,
     ReleaseOutcome,
     ReleaseReason,
     ReleaseRequest,
+    ReleaseState,
+    artifact_sha256,
+    call_with_timeout,
 )
 from .result import SieveResult, TowerResult, Verdict
 from .sieve import ZeroTrustSieve
@@ -65,6 +80,9 @@ from .sieve import ZeroTrustSieve
 Generator = Callable[[str], Awaitable[str]]
 #: Receives the released text and its signature block. Runs only on a release.
 ReleaseSink = Callable[[str, dict[str, str]], None]
+#: Asks the RECEIVING side whether it holds this artifact: (release_id, artifact_sha256) -> bool.
+#: It must not be answered from the sink's own return value; that is the thing being checked.
+DeliveryConfirmer = Callable[[str, str], bool]
 
 #: Rewrite instruction emitted per gate when asking a generator to retry.
 CONSTRAINT_TEXT: dict[Gate, str] = {
@@ -75,6 +93,10 @@ CONSTRAINT_TEXT: dict[Gate, str] = {
     Gate.G2: "Remove affect vocabulary. Report what is observed, not what is felt or believed.",
     Gate.G4: "Rewrite with different structure and phrasing. The previous attempt repeated itself.",
 }
+
+
+class TowerClosedError(RuntimeError):
+    """The tower has been closed and takes no new work. Nothing was filtered or released."""
 
 
 class LogicCornerstone:
@@ -96,8 +118,28 @@ class LogicCornerstone:
         return tidy(cleaned)
 
 
+#: Attributes that decide whether and how output leaves. Fixed once the tower is built.
+_RELEASE_CONTROLS = frozenset({
+    "tap", "release_gate", "release_sink", "require_enforcer",
+    "delivery_confirmer", "confirm_timeout", "ledger", "profile", "production", "metrics",
+})
+
+
 class DeterministicIntegrityTower:
-    """LC -> ZTS -> KG -> TAP."""
+    """LC -> ZTS -> KG -> TAP.
+
+    The attributes that control release are read-only after construction. That stops
+    an ordinary assignment (``tower.release_gate = None``, ``tower.tap = AUTO``) from
+    turning a production tower into a development one. It is not a sandbox: code in
+    the same process can still bypass ``__setattr__``, and a process that can run
+    arbitrary code can call the delivery callback directly. Containment against that
+    is process isolation, which a library cannot provide. See docs/RELEASE_BOUNDARY.md.
+    """
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name in _RELEASE_CONTROLS and self.__dict__.get("_sealed"):
+            raise AttributeError(f"{name} is fixed after construction; build a new tower")
+        object.__setattr__(self, name, value)
 
     def __init__(
         self,
@@ -111,7 +153,15 @@ class DeterministicIntegrityTower:
         release_gate: EnforcerReleaseGate | None = None,
         require_enforcer: bool = False,
         release_sink: ReleaseSink | None = None,
+        delivery_confirmer: DeliveryConfirmer | None = None,
+        confirm_timeout: float | None = 10.0,
+        ledger: ValLedger | None = None,
+        production: bool = False,
     ) -> None:
+        # production=True means "refuse to start unless this is configured as production".
+        # It implies require_enforcer, and the checks in zts.ops.check_configuration must
+        # not FAIL. Checks that can only be UNKNOWN (custom adapters) do not block.
+        require_enforcer = require_enforcer or production
         if release_gate is not None and capstone is not None:
             raise ValueError(
                 "configure one release authority: release_gate (Enforcer) or capstone (legacy), not both"
@@ -132,6 +182,18 @@ class DeterministicIntegrityTower:
         #: Optional delivery hook. Called only after a release is authorized, inside
         #: the guarded call, so a denied release never reaches it.
         self.release_sink = release_sink
+        #: Optional independent check that the receiving side holds the artifact.
+        #: With one, success needs its True. Without one the best state is delivered_unverified.
+        self.delivery_confirmer = delivery_confirmer
+        self.confirm_timeout = confirm_timeout
+        self._closing = False
+        self._key_supplied = hmac_key is not None
+        self.production = production
+        #: Security-relevant counters. Records only; never changes a decision.
+        self.metrics = ReleaseMetrics()
+        self._sealed = False
+        self._inflight = 0
+        self._idle = threading.Condition()
         self._key = hmac_key or secrets.token_bytes(32)
         self._key_id = key_id_for(self._key)
         # By default the ledger key is read from (or created in) an owner-only file,
@@ -142,9 +204,17 @@ class DeterministicIntegrityTower:
             ledger_key = load_or_create_ledger_key(ledger_key_file)
         else:
             ledger_key = secrets.token_bytes(32)
-        self.ledger = ValLedger(key=ledger_key)
+        self.ledger = ledger if ledger is not None else ValLedger(key=ledger_key)
         #: Optional outcome counter. Records only; never changes a decision.
         self.dashboard = dashboard
+        self._sealed = True
+        if production:
+            failed = [c for c in check_configuration(self) if c.status == FAIL]
+            if failed:
+                raise ProductionConfigError(
+                    "not configured as a production tower: "
+                    + "; ".join(f"{c.name}: {c.detail}" for c in failed)
+                )
 
     # --- synchronous path ---------------------------------------------------
 
@@ -160,6 +230,8 @@ class DeterministicIntegrityTower:
         `release` carries the identity and release id for the Enforcer path.
         `signature` is the legacy HANDSHAKE token and means nothing to Enforcer.
         """
+        if self._closing:
+            raise TowerClosedError("the tower is closed")
         started = time.perf_counter_ns()
 
         intake = self.lc.intake(payload)
@@ -191,6 +263,8 @@ class DeterministicIntegrityTower:
         prior instruction on every attempt, which grew the context on each pass
         and made later attempts more expensive than earlier ones for no gain.
         """
+        if self._closing:
+            raise TowerClosedError("the tower is closed")
         started = time.perf_counter_ns()
         working_prompt = prompt
         result: SieveResult | None = None
@@ -238,14 +312,36 @@ class DeterministicIntegrityTower:
         # One release attempt, for the final result only. A retry that produced
         # different text produced a different artifact, and a grant is bound to
         # exactly one.
-        return self._finish(
-            result,
-            signature,
-            attempts=attempts,
-            budget=budget_seconds,
-            started=started,
-            release=release,
+        #
+        # The release path makes blocking calls (grant issuer, status source, replay
+        # store, ledger fsync, delivery, confirmation), so it runs on a worker thread
+        # and the event loop stays free. Cancellation is cooperative: it sets a flag
+        # that the release checks before it asks an authority and again, after the
+        # allow, immediately before delivery. A release that has already begun
+        # delivering cannot be stopped, so it is waited for and its outcome is in the
+        # ledger. Either way the caller sees CancelledError, which means "outcome not
+        # returned", never "nothing happened": consult the ledger before retrying.
+        cancelled = threading.Event()
+        call = asyncio.ensure_future(
+            asyncio.to_thread(
+                self._finish,
+                result,
+                signature,
+                attempts,
+                budget_seconds,
+                started,
+                release,
+                cancelled.is_set,
+            )
         )
+        try:
+            return await asyncio.shield(call)
+        except asyncio.CancelledError:
+            cancelled.set()
+            await asyncio.wait({call})
+            if not call.cancelled():
+                call.exception()  # mark retrieved; the ledger holds what happened
+            raise
 
     # --- internals ----------------------------------------------------------
 
@@ -288,12 +384,81 @@ class DeterministicIntegrityTower:
         budget: float,
         started: int,
         release: ReleaseRequest | None = None,
+        cancelled: Callable[[], bool] | None = None,
     ) -> TowerResult:
         """Decide release, then record the outcome if a dashboard is attached."""
-        outcome = self._decide(result, signature, attempts, budget, started, release)
-        if self.dashboard is not None:
-            self.dashboard.record(outcome)
-        return outcome
+        with self._idle:
+            closing = self._closing
+            if not closing:
+                self._inflight += 1
+        if closing:
+            return self._held(
+                result, budget, attempts, started, reason=ReleaseReason.SHUTTING_DOWN
+            )
+        try:
+            outcome = self._decide(result, signature, attempts, budget, started, release, cancelled)
+            if self.dashboard is not None:
+                self.dashboard.record(outcome)
+            self._observe(outcome)
+            return outcome
+        finally:
+            with self._idle:
+                self._inflight -= 1
+                self._idle.notify_all()
+
+    def _observe(self, outcome: TowerResult) -> None:
+        """Count and log the decision. A failure here must never alter or hide it."""
+        try:
+            self.metrics.record(outcome.release_outcome, outcome.reason_code)
+            policy = self.release_gate.policy_version if self.release_gate is not None else ""
+            log_event(audit_event(outcome, policy_version=policy))
+        except Exception:
+            # Observability must never break or alter a release, but it must not fail silently
+            # either: the failure is counted and shows up in metrics and health().
+            self.metrics.observer_failed()
+
+    def readiness(self) -> ReadinessReport:
+        """Every configuration and runtime check, each PASS, FAIL or UNKNOWN. See zts.ops."""
+        return ReadinessReport(check_configuration(self) + check_runtime(self))
+
+    def health(self) -> dict[str, object]:
+        """Live status for a health endpoint: ok, degraded (a runtime check failed) or closed."""
+        checks = check_runtime(self)
+        failed = [c.name for c in checks if c.status == FAIL]
+        status = "closed" if self._closing else ("degraded" if failed else "ok")
+        return {
+            "status": status,
+            "failed": failed,
+            "inflight": self._inflight,
+            "metrics": self.metrics.snapshot(),
+        }
+
+    def close(self, timeout: float | None = 30.0) -> bool:
+        """Stop accepting releases, wait for those in flight, then close the ledger files.
+
+        New calls to enforce() and run() raise TowerClosedError; a call that was already
+        past that check when shutdown began returns ``not_attempted`` / SHUTTING_DOWN
+        instead of releasing. Returns True
+        when nothing was still running at the deadline. Safe to call twice. A release
+        that is mid-delivery is waited for, not interrupted.
+        """
+        with self._idle:
+            self._closing = True
+            drained = self._idle.wait_for(lambda: self._inflight == 0, timeout)
+        if drained:
+            for part in (getattr(self.ledger, "_store", None), getattr(self.ledger, "_anchor", None)):
+                closer = getattr(part, "close", None)
+                if callable(closer):
+                    closer()
+        return drained
+
+    @property
+    def closing(self) -> bool:
+        return self._closing
+
+    @property
+    def inflight(self) -> int:
+        return self._inflight
 
     def _held(
         self,
@@ -302,7 +467,7 @@ class DeterministicIntegrityTower:
         attempts: int,
         started: int,
         *,
-        outcome: str = "held",
+        outcome: str = ReleaseState.NOT_ATTEMPTED,
         reason: str = "",
         release_id: str = "",
         authorization: dict[str, object] | None = None,
@@ -329,6 +494,7 @@ class DeterministicIntegrityTower:
         budget: float,
         started: int,
         release: ReleaseRequest | None = None,
+        cancelled: Callable[[], bool] | None = None,
     ) -> TowerResult:
         if result.verdict is Verdict.BREACH:
             self.ledger.log("TAP", "HELD", "sieve breach: release withheld", result.payload_out)
@@ -336,8 +502,20 @@ class DeterministicIntegrityTower:
                 result, budget, attempts, started, reason=ReleaseReason.SIEVE_BREACH
             )
 
+        if self.require_enforcer and (self.release_gate is None or self.tap is not None):
+            # Defense in depth for a tower whose controls were forced past __setattr__:
+            # a production tower never falls back to a development release path.
+            self.ledger.log(
+                "TAP", "HELD", "production invariant violated: release withheld", result.payload_out,
+                reason_code=ReleaseReason.INVARIANT_VIOLATED,
+            )
+            return self._held(
+                result, budget, attempts, started, outcome=ReleaseState.DENIED,
+                reason=ReleaseReason.INVARIANT_VIOLATED,
+            )
+
         if self.release_gate is not None:
-            return self._decide_enforced(result, attempts, budget, started, release)
+            return self._decide_enforced(result, attempts, budget, started, release, cancelled)
 
         if self.tap is None:
             self.ledger.log(
@@ -362,7 +540,10 @@ class DeterministicIntegrityTower:
         started: int,
     ) -> TowerResult:
         """The capstone path, unchanged in what it decides. Explicit opt-in only."""
-        assert self.tap is not None
+        if self.tap is None:  # not an assert: asserts vanish under python -O
+            return self._held(
+                result, budget, attempts, started, reason=ReleaseReason.NOT_CONFIGURED
+            )
         decision = self.tap.authorize(result.payload_out, signature)
         self.ledger.log(
             "TAP",
@@ -374,7 +555,7 @@ class DeterministicIntegrityTower:
         )
 
         if not decision.released:
-            return self._held(result, budget, attempts, started)
+            return self._held(result, budget, attempts, started, outcome=ReleaseState.DENIED)
 
         signature_value = signature_block(result.payload_out, self._key, self._key_id)
         if self.release_sink is not None:
@@ -393,7 +574,7 @@ class DeterministicIntegrityTower:
                     budget,
                     attempts,
                     started,
-                    outcome="unconfirmed",
+                    outcome=ReleaseState.DELIVERY_UNKNOWN,
                     reason=ReleaseReason.ACTION_FAILED,
                 )
         return TowerResult(
@@ -405,7 +586,7 @@ class DeterministicIntegrityTower:
             signature=signature_value,
             attempts=attempts,
             elapsed_ns=time.perf_counter_ns() - started,
-            release_outcome="released",
+            release_outcome=ReleaseState.RELEASED_LEGACY,
             authorization={
                 "kind": "legacy-capstone",
                 "mode": decision.mode.value,
@@ -420,12 +601,22 @@ class DeterministicIntegrityTower:
         budget: float,
         started: int,
         release: ReleaseRequest | None,
+        cancelled: Callable[[], bool] | None = None,
     ) -> TowerResult:
         """Release through Enforcer. The output is reachable only inside its guarded call."""
-        assert self.release_gate is not None
+        if self.release_gate is None:  # not an assert: asserts vanish under python -O
+            return self._held(
+                result, budget, attempts, started, reason=ReleaseReason.NOT_CONFIGURED
+            )
         payload = result.payload_out
         release_id = getattr(release, "release_id", "")
         release_id = release_id if isinstance(release_id, str) else ""
+
+        if cancelled is not None and cancelled():
+            return self._held(
+                result, budget, attempts, started,
+                reason=ReleaseReason.CANCELLED, release_id=release_id,
+            )
 
         # Write-ahead: record the attempt before Enforcer can consume a grant.
         # If the ledger cannot take it, nothing is released and no grant is spent.
@@ -445,7 +636,7 @@ class DeterministicIntegrityTower:
                 budget,
                 attempts,
                 started,
-                outcome="denied",
+                outcome=ReleaseState.NOT_ATTEMPTED,
                 reason=ReleaseReason.LEDGER_UNAVAILABLE,
                 release_id=release_id,
             )
@@ -466,7 +657,7 @@ class DeterministicIntegrityTower:
             return block
 
         outcome = self.release_gate.release(
-            release, payload, profile=self.profile.name, action=deliver
+            release, payload, profile=self.profile.name, action=deliver, cancelled=cancelled
         )
         return self._conclude(result, payload, outcome, attempts, budget, started)
 
@@ -482,35 +673,71 @@ class DeterministicIntegrityTower:
         # `payload` is the snapshot the envelope was built from and the callback
         # received. It is used for the output and the ledger so nothing that
         # touches `result` after delivery can change what is reported released.
-        if outcome.released:
-            status, label = "RELEASED", "released"
-        elif outcome.action_started:
-            status, label = "UNCONFIRMED", "unconfirmed"
-        elif outcome.authorized:
-            status, label = "HELD", "held"
-        else:
-            status, label = "HELD", "denied"
+        verified = False
+        reason = outcome.reason_code
+        if outcome.released and self.delivery_confirmer is not None:
+            # Ask the receiving side. The callback returning is not evidence it arrived.
+            try:
+                verified = (
+                    call_with_timeout(
+                        self.delivery_confirmer,
+                        self.confirm_timeout,
+                        outcome.release_id,
+                        artifact_sha256(payload),
+                    )
+                    is True
+                )
+            except Exception:
+                verified = False
+            if not verified:
+                reason = ReleaseReason.DELIVERY_UNCONFIRMED
 
+        delivered = outcome.released and (verified or self.delivery_confirmer is None)
+        if delivered:
+            status = "RELEASED"
+        elif outcome.released or outcome.action_started:
+            status = "UNCONFIRMED"
+        else:
+            status = "HELD"
+
+        # `released` in the ledger means the artifact was delivered AND not left unconfirmed;
+        # `callback_completed` is the narrower fact that the callback returned.
+        evidence = {**outcome.evidence(), "reason_code": reason, "delivery_verified": verified,
+                    "released": delivered, "callback_completed": outcome.released,
+                    "ledger_durable": self.ledger.durable}
         recorded = True
         try:
-            self.ledger.log(
-                "TAP", status, outcome.reason_code, payload, **outcome.evidence()
-            )
+            self.ledger.log("TAP", status, reason, payload, **evidence)
         except Exception:
             recorded = False
+        durable = recorded and self.ledger.durable
 
-        evidence = outcome.evidence()
-        if not outcome.released:
+        if not delivered:
+            if outcome.released or outcome.action_started:
+                label = ReleaseState.DELIVERY_UNKNOWN
+            elif outcome.authorized:
+                label = ReleaseState.FAILED_BEFORE_DELIVERY
+            elif reason in NOT_ATTEMPTED_REASONS:
+                label = ReleaseState.NOT_ATTEMPTED
+            else:
+                label = ReleaseState.DENIED
             return self._held(
                 result,
                 budget,
                 attempts,
                 started,
                 outcome=label,
-                reason=outcome.reason_code,
+                reason=reason,
                 release_id=outcome.release_id,
                 authorization=evidence,
             )
+
+        if not durable:
+            label = ReleaseState.DELIVERED_AUDIT_INCOMPLETE
+        elif verified:
+            label = ReleaseState.DELIVERED
+        else:
+            label = ReleaseState.DELIVERED_UNVERIFIED
 
         block = outcome.value
         return TowerResult(
@@ -522,8 +749,10 @@ class DeterministicIntegrityTower:
             signature=block,
             attempts=attempts,
             elapsed_ns=time.perf_counter_ns() - started,
-            release_outcome="released" if recorded else "released_unrecorded",
-            reason_code=outcome.reason_code,
+            release_outcome=label,
+            delivery_verified=verified,
+            audit_durable=durable,
+            reason_code=reason,
             release_id=outcome.release_id,
             authorization=evidence,
         )

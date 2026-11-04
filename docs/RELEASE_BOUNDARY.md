@@ -48,10 +48,14 @@ release" step that a later edit could separate.
 |------|------------|
 | `enforce()` | `_finish` -> `_decide` |
 | `run()` and its rewrite/retry loop | the same `_finish`, once, for the final result only |
-| Sieve breach | held before the gate is reached (`SIEVE_BREACH`) |
-| No release authority configured | held (`RELEASE_NOT_CONFIGURED`) |
-| Exception anywhere in the gate | converted to a denial or an unconfirmed outcome; never a release |
-| Exception raised by the delivery callback | `unconfirmed`, output withheld |
+| Sieve breach | `not_attempted` before the gate is reached (`SIEVE_BREACH`) |
+| No release authority configured | `not_attempted` (`RELEASE_NOT_CONFIGURED`) |
+| Exception anywhere in the gate | converted to a denial or a `delivery_unknown` outcome; never a release |
+| Exception raised by the delivery callback | `delivery_unknown`, output withheld |
+| A timed-out Enforcer call that wakes up later | refused at the callback by an abandoned flag taken under a lock |
+| Cancellation of `run()` | cooperative flag checked before an authority is asked and again before delivery |
+| Reassigning `release_gate`, `tap`, `release_sink`, `ledger`, ... on a built tower | raises `AttributeError`; a forced swap is caught by the decision-time invariant |
+| Calls after `close()` | raise `TowerClosedError`; a call racing shutdown returns `not_attempted` |
 | Legacy `ArchitectsProtocol` capstone | explicit opt-in only, see "Development and test bypasses" |
 | `scrub()`, `audit()`, `ZeroTrustSieve.run()`, `zts` CLI | NOT guarded. These are inspection tools that return filtered text by design. They are not release paths and must not be wired to one. |
 
@@ -146,20 +150,31 @@ envelope was built from, and a second ledger entry must succeed.
 
 ## Denial semantics
 
-A denied or invalid release returns a `TowerResult` with `released=False`,
+A release that does not deliver returns a `TowerResult` with `released=False`,
 `output=""`, no signature and no checksum, no payload text anywhere in `sieve`
-(it is `sieve.redacted()`), never calls the release sink, and writes a ledger
-entry. This holds for every outcome except `released`, including a sieve breach. `release_outcome` is one of:
+(it is `sieve.redacted()`), and a ledger entry. If the delivery callback was never
+reached, it was never called. `release_outcome` is one of the `ReleaseState` values,
+each a different fact:
 
-* `released`: allowed, and the callback finished.
-* `denied`: an authorization or precondition check said no. Nothing was spent.
-* `held`: no authority configured, a sieve breach, or Enforcer allowed and the
-  grant was spent, but ZTS stopped before delivering anything (artifact changed,
-  CNS gone, ledger refused). The grant is not reusable.
-* `unconfirmed`: Enforcer allowed and the callback began but did not finish.
-  Delivery cannot be ruled out. The grant is spent; a retry needs a new grant.
-* `released_unrecorded`: released, and the final ledger entry could not be
-  written. Delivery cannot be undone, so this is reported instead of hidden.
+| State | Callback ran | Grant | Output returned |
+|---|---|---|---|
+| `denied` | no | unspent | no |
+| `not_attempted` | no | unspent | no |
+| `failed_before_delivery` | no | spent | no |
+| `delivery_unknown` | began, or finished unconfirmed | spent | no |
+| `delivered_audit_incomplete` | yes | spent | yes |
+| `delivered_unverified` | yes | spent | yes |
+| `delivered` | yes, and confirmed | spent | yes |
+| `released_legacy` | yes (legacy capstone) | n/a | yes |
+
+`delivered` needs all three: Enforcer allowed and the callback finished; the receiving side
+confirmed (`delivery_confirmer` returned exactly `True`); and the final ledger entry was fsynced
+to a durable store. Without a confirmer the best state is `delivered_unverified`. With an
+in-memory ledger, or when the last write failed, it is `delivered_audit_incomplete`. A
+confirmer that says no, raises, or does not answer within `confirm_timeout` makes the state
+`delivery_unknown` and withholds the output, even though the callback ran. `grant_state` in the
+evidence is `unspent`, `spent`, or `unknown` (after an Enforcer timeout or a replay-store error,
+when the grant may or may not have been consumed; treat it as spent).
 
 `reason_code` is Enforcer's code (`PROOF_MISSING`, `PROOF_INVALID`,
 `SCOPE_MISMATCH`, `GRANT_EXPIRED`, `GRANT_REPLAYED`, `AUTHORITY_STATUS_STALE`,
@@ -169,7 +184,8 @@ entry. This holds for every outcome except `released`, including a sieve breach.
 `ENVELOPE_INVALID`, `RELEASE_ID_MISSING`, `RELEASE_SCOPE_MISSING`,
 `RELEASE_REQUEST_MISSING`, `PROOF_PROVIDER_ERROR`, `ARTIFACT_CHANGED`,
 `LEDGER_UNAVAILABLE`, `RELEASE_ACTION_FAILED`, `RELEASE_NOT_CONFIGURED`,
-`SIEVE_BREACH`).
+`SIEVE_BREACH`, `DELIVERY_UNCONFIRMED`, `RELEASE_CANCELLED`, `SHUTTING_DOWN`, `ENFORCER_TIMEOUT`,
+`PROOF_PROVIDER_TIMEOUT`, `POLICY_CHANGED`, `PRODUCTION_INVARIANT_VIOLATED`).
 
 `TowerResult.authorization` is evidence of a decision (digests, ids, codes,
 times). It is never a credential, and nothing may treat it as permission.
@@ -197,8 +213,18 @@ and a spent grant cannot be reused for another release.
   close it.
 * An interrupted release (callback raised or the process died inside it) has
   spent its grant. There is no automatic retry. A new grant and a new release id
-  are required, and the `unconfirmed` outcome tells the caller to check
+  are required, and the `delivery_unknown` outcome tells the caller to check
   downstream state before issuing one.
+* Revocation is checked once, inside Enforcer, immediately before the grant is spent. A
+  revocation that arrives after that check and before the callback's effect is not
+  caught. ZTS does not ask again, because that would copy Enforcer's revalidation
+  into ZTS. This is a tested known limit (`test_release_residual.py`).
+* Timeouts: `EnforcerReleaseGate(timeout=...)` bounds the grant provider and the whole
+  Enforcer call (proof verification, status revalidation and replay consumption are
+  all inside it). A call that times out before the callback starts is marked abandoned
+  under the same lock the callback takes, so if it wakes later and allows, the callback
+  refuses. If the callback has already started, delivery is waited for, not abandoned.
+  The grant is then reported `unknown`, since the late call may have consumed it.
 
 ## The ledger
 
@@ -216,16 +242,27 @@ What is and is not true about it:
 
 * It is a hash chain. That is tamper evidence, not tamper-proofing. Anyone able
   to write it can rebuild it.
-* Writes are now serialized by a lock, so threads in one process cannot fork the
-  chain (tested). That says nothing about several processes.
-* An optional `LedgerAnchor` receives each new head before the entry is
-  appended, and `verify_anchored()` checks the chain against it. This detects
-  truncation and replacement only while the anchor is out of the writer's
-  reach. ZTS ships the interface and a test double. No operational anchor exists.
-* The ledger is in memory. It is gone when the process ends. There is no
-  persistence, restart recovery or expected-head retention in this repository.
-  Operating it needs an append-only external store and anchor that this
-  repository does not contain.
+* **Durable store.** `FileLedgerStore` appends one entry per line and fsyncs before
+  `log()` returns, serializes appenders across processes with `flock`, and catches up
+  with entries other processes appended. A write that cannot be persisted raises and the
+  entry is not acknowledged. Files are created mode 600, and opening one writable by
+  others is refused.
+* **Recovery.** Opening verifies the whole chain. A final line without its newline is an
+  unacknowledged interrupted write: it is removed, copied to `<ledger>.torn`, and reported
+  in `ledger.recovery`. Every other defect (a line that does not parse, a broken link, a
+  wrong sequence or digest) raises `LedgerCorruptionError` and is not repaired.
+* **Write-ahead.** The `ATTEMPT` entry must be written before any grant is requested, so
+  an unwritable audit trail stops the release before anything is spent.
+* **Anchor.** An `LedgerAnchor` receives each head before the entry is appended;
+  `verify_anchored()` detects truncation, rollback and tail replacement. `FileLedgerAnchor`
+  is a real implementation, but a file only anchors anything if it is out of the writer's
+  reach (a WORM or append-only volume, another account, another host). ZTS cannot see
+  where a path is mounted, so independence is a deployment fact, not a property of this
+  code. If the anchor accepts a head and the file write then fails, the anchor is exactly
+  one entry ahead; that is reported, not healed, because it looks identical to a removed
+  tail.
+* **Not provided.** Replication, backup, retention or pruning, rotation of the ledger
+  key, a ledger shared by several hosts, an external timestamp authority.
 * If the aborted release was authorized inside Enforcer but ZTS stopped it, the
   Enforcer decision record is not available to ZTS (Enforcer's `execute` does not
   return it on that path), so that entry carries ZTS's reason and `authorized`
@@ -266,47 +303,56 @@ development, tests and existing callers. They are never selected implicitly:
 
 ## Known unresolved risks
 
-1. **No production verifier, status source, issuer or trust root exists.** Without
-   them the Enforcer path denies everything, which is safe and unusable.
-2. **In-memory ledger, no operational anchor, no persistence.** See above.
-3. **Replay durability depends on the store the deployment passes in**, and ZTS
-   cannot check it. An in-memory store reopens a replay window after a restart.
-4. **Multi-host replay protection is not provided.**
-5. **A released result keeps its full sieve record**, including `payload_in` (the
-   text before filtering) and the matched text of findings. Only results whose
-   output was withheld are redacted: `sieve.redacted()` blanks the payloads and
-   replaces matched text with `[redacted]`, keeping verdict, score, gate, offsets
-   and codes. The ledger never holds matched text: its gate entries record the
-   gate, verdict and number of findings.
-6. **ZTS does not authenticate the identity it is given.** It binds the
-   artifact to the CNS digest of whatever `IdentityContext` the caller supplies.
-   Whether that identity is the true caller is the identity layer's problem, and
-   whether it may receive the output is the grant's.
-7. **The Enforcer library only guards calls routed through it.** A process that can
-   run arbitrary code can read the text from the result of any inspection call
-   or call the sink directly. A library is not a boundary against code in the
-   same process.
-8. **Blocking calls in `run()`.** The proof provider, sink, ledger and Enforcer are
-   synchronous.
-9. **Behavior changes for existing callers** (see CHANGELOG): the default tower no
-   longer releases; `tower.tap` is `None` unless a capstone was passed; the CNS
-   floor moved to 2.3.0.
-10. **The test trust adapters are test code.** A permissive verifier defeats
-    Enforcer, and the tests prove nothing about a real one.
+The full decision list, with options, is in [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md).
+
+1. **No production proof verifier, status source, issuer or trust root exists.** Without
+   them the Enforcer path denies everything, which is safe and unusable (decisions A, B).
+2. **Replay protection stops at one host** and depends on the store passed in. In-memory
+   stores forget at restart; `production=True` refuses one it can identify. A custom store is
+   reported UNKNOWN (decision C).
+3. **The ledger anchor's independence is unknown.** It is real code, and detects truncation
+   only if the anchor survives the attacker (decision D).
+4. **ZTS does not authenticate the identity it is given.** It binds the artifact to the CNS
+   digest of whatever `IdentityContext` the caller supplies (decision E).
+5. **A revocation after Enforcer's status check and before the callback's effect is missed.**
+6. **Code in the same process is not contained.** It can call the delivery callback, read keys,
+   or edit memory. Sealing the tower's attributes stops accidents and ordinary assignment, not
+   an attacker. The control is process or network isolation of the delivery path.
+7. **Confirmation is only as independent as the confirmer.** If it asks the sink's own process,
+   it proves nothing.
+8. **A released result keeps its full sieve record**, including `payload_in` and the matched
+   text of findings. Only results whose output was withheld are redacted. The ledger never
+   holds matched text.
+9. **Cancellation returns no result for a release that finished.** `CancelledError` means the
+   outcome was not returned; the ledger holds it.
+10. **Behavior changes for existing callers** (see CHANGELOG): the default tower no longer
+    releases; `tower.tap` is `None` unless a capstone was passed; the CNS floor is 2.3.0; the
+    `release_outcome` values changed; release controls are read-only after construction.
+11. **The test trust adapters are test code.** A permissive verifier defeats Enforcer, and the
+    tests prove nothing about a real one.
 
 ## Tests
 
-* `tests/test_release_boundary.py`: the adversarial suite against the real tower,
-  adapter, CNS and Enforcer, with a test-only HMAC verifier and status source
-  (`tests/release_kit.py`). Each denial is checked for: no output, no signature,
-  the release callback never ran, a ledger entry exists, and the result cannot
-  be read as a success. Each runs through both `enforce()` and `run()`.
-* `tests/test_release_defaults.py`: the safe default, legacy-mode isolation,
-  independence from CNS and Enforcer, and structural guards. Needs neither
-  package.
-* `tests/test_ledger_hardening.py`: concurrent writers, expected head, anchoring.
-* `tests/test_cns_version_rule.py`, `tests/test_cns_connector.py`: the version
-  floor and the dock against real CNS.
+All of these run the real tower, adapter, CNS and Enforcer; the only stand-ins are the two test
+trust adapters in `tests/release_kit.py`, which are named as fixtures and are not production code.
 
-CI has a job with `.[dev,cns,enforcer]` and `ZTS_REQUIRE_CNS=1`,
-`ZTS_REQUIRE_ENFORCER=1`, so a missing package fails the run instead of skipping.
+* `test_release_boundary.py`: the original attack list, each denial checked for no output, no
+  signature, the callback never ran, a ledger entry, and an unambiguous result; sync and async.
+* `test_release_states.py`: every release state reached for real; independent confirmation.
+* `test_release_async.py`: cancellation at each stage, timeouts and late arrival, shutdown, policy
+  and subject changes after authorization, concurrent distinct releases.
+* `test_release_residual.py`: altered artifact under a reused id, several writers on one replay
+  file, partial delivery, anchor failure at the decision point, truncation after a release, and
+  the known limits.
+* `test_release_containment.py`: sealed controls, the forced-swap invariant, structural checks
+  that no second release path exists.
+* `test_ledger_durable.py`, `test_ledger_hardening.py`: persistence, torn-write recovery,
+  corruption refusal, truncation/rollback/replacement against an anchor, four real processes
+  writing one chain.
+* `test_ops.py`: metrics, audit events, production validation, health.
+* `test_release_defaults.py`: the safe default, legacy isolation, independence from CNS and
+  Enforcer. Needs neither package.
+* `test_cns_version_rule.py`, `test_cns_connector.py`: the version floor and the dock against real CNS.
+
+CI has a job with `.[dev,cns,enforcer]` and `ZTS_REQUIRE_CNS=1`, `ZTS_REQUIRE_ENFORCER=1`, so a
+missing package fails the run instead of skipping.

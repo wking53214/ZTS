@@ -170,13 +170,16 @@ class TowerResult:
     #: Rewrite attempts consumed.
     attempts: int = 1
     elapsed_ns: int = 0
-    #: What happened at the release boundary: "released", "held" (nothing was
-    #: authorized or nothing was attempted), "denied" (an authorization check said
-    #: no), "unconfirmed" (authorized, and the release action began but did not
-    #: finish, so delivery cannot be ruled out), or "released_unrecorded"
-    #: (released, and the final ledger entry could not be written). "" only on
-    #: results built outside the tower.
+    #: What happened at the release boundary. One of the zts.release.ReleaseState
+    #: values: denied, not_attempted, failed_before_delivery, delivery_unknown,
+    #: delivered_audit_incomplete, delivered_unverified, delivered, released_legacy.
+    #: Each is a different fact, defined on ReleaseState. "" only on results built
+    #: outside the tower.
     release_outcome: str = ""
+    #: True only when a configured independent confirmer reported the delivery.
+    delivery_verified: bool = False
+    #: True only when the final audit record was fsynced to a durable store.
+    audit_durable: bool = False
     #: Stable code for the outcome: an Enforcer reason code or a ZTS code from
     #: zts.release.ReleaseReason. "" when the capstone released or held on its own.
     reason_code: str = ""

@@ -167,13 +167,18 @@ integrity guarantee overstated what a hash chain in the same process as its
 writer can provide.
 
 Writes are serialized by a lock, so threads in one process cannot fork the chain.
-An optional `LedgerAnchor` receives each head before its entry is appended and
-`verify_anchored()` checks the chain against it, which catches truncation and
-replacement only while the anchor is out of the writer's reach. The ledger is in
-memory and no operational anchor ships. For an Enforcer release it records the
-CNS subject digest, release id, operation, scope, policy version, the Enforcer
-decision's identifiers and reason, and the outcome. Details and limits are in
-[docs/RELEASE_BOUNDARY.md](docs/RELEASE_BOUNDARY.md).
+With a `FileLedgerStore` the ledger is also durable: each entry is fsynced before it is
+acknowledged, appenders in several processes share one chain through `flock`, an interrupted
+final write is removed and reported on the next open, and any other damage makes the open
+fail instead of being repaired. An optional `LedgerAnchor` receives each head before its
+entry is appended and `verify_anchored()` checks the chain against it, which catches
+truncation, rollback and replacement only while the anchor is out of the writer's reach;
+`FileLedgerAnchor` is provided, and where it is mounted decides whether it is independent.
+Nothing is replicated, pruned or shared across hosts. For an Enforcer release the ledger
+records an `ATTEMPT` before any grant is requested, then `RELEASING`, then the outcome, with
+the CNS subject digest, release id, operation, scope, policy version, the Enforcer decision's
+identifiers and reason, whether the delivery was confirmed, and whether the ledger was
+durable. Details and limits are in [docs/RELEASE_BOUNDARY.md](docs/RELEASE_BOUNDARY.md).
 
 ## Scoring
 

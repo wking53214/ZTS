@@ -54,6 +54,7 @@ from enforcer import (  # noqa: E402
 from zts import DeterministicIntegrityTower, KineticGovernor  # noqa: E402
 from zts.cns import CNSDock  # noqa: E402
 from zts.ledger import ValLedger  # noqa: E402
+from zts.ledger_store import FileLedgerStore  # noqa: E402
 from zts.release import EnforcerReleaseGate, ReleaseRequest  # noqa: E402
 
 TEXT = "Disk utilization reached 94% on node 3 at 02:17 UTC."
@@ -274,6 +275,9 @@ def build(
     identity: Any = None,
     sink: Callable[..., None] | None = None,
     verifier: HmacVerifier | None = None,
+    confirmer: Any = "default",
+    gate_timeout: float | None = None,
+    **tower_options: Any,
 ) -> Stack:
     clock = clock or Clock()
     status = StatusSource(clock)
@@ -281,17 +285,26 @@ def build(
     store = store if store is not None else SQLiteReplayStore(tmp_path / "replay.db")
     gate_enforcer = Enforcer(verifier=verifier, revalidator=status, replay_store=store, clock=clock)
     recorder = Sink()
+    receiving = sink if hasattr(sink, "calls") else recorder
+    if ledger is None:
+        ledger = ValLedger(key=b"l" * 32, store=FileLedgerStore(tmp_path / "ledger.jsonl"))
+
+    def default_confirmer(release_id: str, digest: str) -> bool:
+        """Asks the receiving side what it holds. It does not look at the sink's return value."""
+        return digest in {_sha(out.encode("utf-8")) for out, _ in receiving.calls}
+
     tower = DeterministicIntegrityTower(
         PROFILE,
         governor=KineticGovernor(ceiling_seconds=0.001),
         hmac_key=b"k" * 32,
         persist_ledger_key=False,
-        release_gate=EnforcerReleaseGate(gate_enforcer, policy_version=policy),
+        release_gate=EnforcerReleaseGate(gate_enforcer, policy_version=policy, timeout=gate_timeout),
         require_enforcer=True,
         release_sink=sink or recorder,
+        delivery_confirmer=default_confirmer if confirmer == "default" else confirmer,
+        ledger=ledger,
+        **tower_options,
     )
-    if ledger is not None:
-        tower.ledger = ledger
     # Keep a handle on each SieveResult the tower is about to decide on, so a test
     # can mutate it between authorization and release.
     captured: list[Any] = []
@@ -372,10 +385,13 @@ def assert_not_released(
     *,
     outcome: str | None = None,
     deliveries: int = 0,
+    ledger_deliveries: int | None = None,
 ) -> None:
     """Everything a denied release must be: no output, no callback, recorded, unambiguous.
 
     `deliveries` is how many earlier, legitimate releases the sink may have seen.
+    `ledger_deliveries` is how many RELEASED entries the ledger may hold; it differs from
+    `deliveries` only after a restart, where a durable ledger still holds the earlier run.
     """
     assert result.released is False
     assert result.output == ""
@@ -392,4 +408,5 @@ def assert_not_released(
     assert final.status in ("HELD", "UNCONFIRMED"), final.status
     assert final.extra.get("reason_code", final.detail) == reason or final.detail == reason
     assert stack.tower.ledger.verify()[0]
-    assert sum(e.status == "RELEASED" for e in tap_entries(stack)) == deliveries
+    expected = deliveries if ledger_deliveries is None else ledger_deliveries
+    assert sum(e.status == "RELEASED" for e in tap_entries(stack)) == expected
