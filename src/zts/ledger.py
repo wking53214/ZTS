@@ -19,14 +19,19 @@ here so nothing downstream claims more:
   * An optional :class:`LedgerAnchor` receives the new head before each entry is
     appended. A ledger whose anchor lives outside the writer's control can tell
     a truncated or replaced chain from the real one (:meth:`ValLedger.verify_anchored`).
-    ZTS ships the interface only. Whoever can also write the anchor can rewrite
-    both, and the ledger is held in memory, so it is lost when the process ends.
+    ZTS ships the interface and, in zts.ledger_store, a file-backed anchor. Whoever
+    can also write the anchor can rewrite both.
+  * With a ``store`` (zts.ledger_store.FileLedgerStore) the chain is persisted:
+    every entry is written and fsynced before log() returns, and an entry that
+    could not be persisted raises instead of being acknowledged. Without one the
+    ledger is in memory and is lost when the process ends. ``durable`` says which.
 """
 
 from __future__ import annotations
 
 import hashlib
 import hmac
+import contextlib
 import json
 import os
 import secrets
@@ -117,12 +122,28 @@ class ValLedger:
         key: bytes | None = None,
         key_id: str | None = None,
         anchor: LedgerAnchor | None = None,
+        store: Any = None,
     ) -> None:
         self._key = key or secrets.token_bytes(32)
         self.key_id = key_id or key_id_for(self._key)
         self._entries: list[LedgerEntry] = []
         self._anchor = anchor
+        self._store = store
         self._lock = threading.RLock()
+        #: What opening the store found (torn tail removed, entry count). None without a store.
+        self.recovery = None
+        if store is not None:
+            self._entries = store.load()
+            self.recovery = store.recovery
+
+    @property
+    def durable(self) -> bool:
+        """True only when every acknowledged entry has been fsynced to a store."""
+        return bool(getattr(self._store, "durable", False))
+
+    @property
+    def anchored(self) -> bool:
+        return self._anchor is not None
 
     def __len__(self) -> int:
         return len(self._entries)
@@ -148,7 +169,10 @@ class ValLedger:
         payload: str = "",
         **extra: Any,
     ) -> LedgerEntry:
-        with self._lock:
+        with self._lock, self._exclusive():
+            if self._store is not None:
+                # Another process may have appended since we last wrote.
+                self._entries.extend(self._store.read_new(self.head, len(self._entries)))
             entry = LedgerEntry(
                 sequence=len(self._entries),
                 timestamp=time.time(),
@@ -168,8 +192,15 @@ class ValLedger:
                     self._anchor.publish(entry.sequence, entry.digest)
                 except Exception as exc:
                     raise LedgerAnchorError("the ledger anchor did not accept the head") from exc
+            if self._store is not None:
+                # Persist before acknowledging. If this raises the entry is not in
+                # memory, and the anchor may be exactly one head ahead of the file.
+                self._store.append(entry)
             self._entries.append(entry)
             return entry
+
+    def _exclusive(self) -> Any:
+        return self._store.exclusive() if self._store is not None else contextlib.nullcontext()
 
     def _fingerprint(self, payload: str) -> str:
         return hmac.new(self._key, payload.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -217,10 +248,15 @@ class ValLedger:
         except Exception:
             return False, "anchor unavailable"
         with self._lock:
+            if self._store is not None:
+                with self._exclusive():
+                    self._entries.extend(self._store.read_new(self.head, len(self._entries)))
             entries = list(self._entries)
         if latest is None:
             return (False, "anchor holds no head") if entries else (True, "empty ledger, empty anchor")
         sequence, head = latest
+        if isinstance(sequence, int) and sequence == len(entries):
+            return False, "anchor is one entry ahead of the chain: truncated, or a write was interrupted"
         if not isinstance(sequence, int) or sequence < 0 or sequence >= len(entries):
             return False, "chain is shorter than the anchored head: truncated"
         if entries[sequence].digest != head:

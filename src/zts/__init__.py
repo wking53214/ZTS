@@ -31,6 +31,7 @@ from .gates import (
 )
 from .governor import Budget, KineticGovernor
 from .ledger import LedgerEntry, ValLedger
+from .ledger_store import FileLedgerAnchor, FileLedgerStore, LedgerCorruptionError, LedgerStoreError
 from .normalizer import StructureNormalizer
 from .release import (
     EnforcerReleaseGate,
@@ -111,4 +112,8 @@ __all__ = [
     # audit
     "ValLedger",
     "LedgerEntry",
+    "FileLedgerStore",
+    "FileLedgerAnchor",
+    "LedgerStoreError",
+    "LedgerCorruptionError",
 ]
