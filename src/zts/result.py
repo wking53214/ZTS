@@ -180,6 +180,9 @@ class TowerResult:
     delivery_verified: bool = False
     #: True only when the final audit record was fsynced to a durable store.
     audit_durable: bool = False
+    #: True only when a ledger anchor holds the head that includes the final record. An anchor that
+    #: fails does not undo a delivery; this flag and the metrics say the tamper evidence is behind.
+    audit_anchored: bool = False
     #: Stable code for the outcome: an Enforcer reason code or a ZTS code from
     #: zts.release.ReleaseReason. "" when the capstone released or held on its own.
     reason_code: str = ""
