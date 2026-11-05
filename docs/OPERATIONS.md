@@ -46,7 +46,13 @@ gate, a legacy capstone, a non-durable ledger, no anchor, no delivery confirmer,
 per-process random signature key, Enforcer's reject-everything defaults, an adapter that calls
 itself a test fixture, and an in-memory replay store. It does **not** and cannot vouch for a custom
 proof verifier, status source or replay store: those report UNKNOWN, and a deployment must review
-and exercise them itself.
+and exercise them itself. `enforcer_policy` reads Enforcer's own limits through its public `describe()` (0.1.1 or
+later): PASS at or below 5 min grant lifetime, 5 s clock skew and 30 s status age, UNKNOWN when any is looser (a longer
+limit widens how long a stolen or revoked grant stays usable) and UNKNOWN on Enforcer 0.1.0, which cannot report them.
+
+Setting up a deployment for the first time: [DEPLOYMENT.md](DEPLOYMENT.md). It lists the components you must
+provide, the database roles and grants (checked by experiment), the files and their permissions, what each readiness
+check means and what clears it, and the acceptance tests to run in your own environment.
 
 Call `tower.readiness()` for the full list (PASS / FAIL / UNKNOWN with a reason) and
 `tower.health()` for a live status (`ok`, `degraded`, `closed`). Health re-checks the live state of what ZTS can

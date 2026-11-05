@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Readiness through the public interface, and a deployment guide (sixth pass)
+
+Added:
+- `docs/DEPLOYMENT.md`: components you must provide, trust-root and issuer contract, PostgreSQL roles and grants
+  (found by experiment on PostgreSQL 16), TSA and receipt custody, tower assembly, what each readiness check means,
+  process-isolation objectives, and 14 acceptance tests to run in your own environment. `tests/test_deployment_guide.py`
+  runs its SQL against a real PostgreSQL, checks its Python against the real signatures, requires every readiness check
+  to be named in it, and checks the numbers it quotes against the code.
+- Readiness check `enforcer_policy` (limits read from `Enforcer.describe()`; UNKNOWN when looser than recommended).
+- Public read-only accessors: `EnforcerReleaseGate.enforcer` and `.dock`, `ValLedger.anchor`,
+  `DeterministicIntegrityTower.release_signature_key_supplied`, `Ed25519GrantVerifier.trust`,
+  `HttpStatusRevalidator.trust`; `ops.RECOMMENDED_LIMITS`.
+
+Changed:
+- Readiness takes identifiers, replay-store facts and limits from `Enforcer.describe()`. A fact taken that way can only
+  produce FAIL or UNKNOWN; PASS still needs the real adapter object. The private reads that remain (Enforcer's three
+  adapters, and the SQLite connection on Enforcer 0.1.0 only) are confined to two documented helpers, and a test fails if
+  another appears.
+
+
 ### Phase 2 audit follow-up (fifth pass)
 
 Changed:

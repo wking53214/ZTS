@@ -1,5 +1,7 @@
 # Production readiness: what is done, what was decided, and what only people can establish
 
+For the steps to deploy, see [DEPLOYMENT.md](DEPLOYMENT.md).
+
 This document is the honest state of the release boundary. It separates four things
 that are easy to blur:
 
@@ -87,6 +89,7 @@ keys absent from every output scanned. Findings, and their disposition:
 | Status and TSA timeouts were per operation, not a total deadline: a server sending a byte at a time kept a 1 s timeout from firing for over 12 s | **Fixed**: one deadline covers the TLS handshake, the request and the whole response; a watchdog closes the socket. **Not covered**: name resolution and the TCP connect (they block in the operating system); the gate's `timeout` still bounds the release itself |
 | Trust-root file: duplicate JSON keys resolved to the last; the parent directory and symlinks were not checked; the file was checked by path and then read by path | **Fixed**: repeated keys and NaN are refused; every directory that decides what the name means (parents, symlink targets followed one step at a time, the resolved file) must be owned by this user or root and not writable by others (a sticky directory like `/tmp` is accepted), checked on every use; the file is opened once and checked and read from that descriptor; only regular files up to 1 MiB |
 | Calling the delivery callback directly bypasses everything | **Not solvable in a library**: process isolation |
+| Readiness read several private Enforcer attributes and never looked at Enforcer's own limits | **Fixed where a public interface exists**: identifiers, replay-store facts and limits come from `Enforcer.describe()` (and can only produce FAIL or UNKNOWN, never PASS); ZTS's own classes got public read-only accessors; a new `enforcer_policy` check reads the limits. **Left**: Enforcer exposes no accessor for the adapter objects, so three reads of its private attributes remain in one helper (`ops._adapters`); an identifier string would not be enough, because a custom adapter can copy it |
 
 ## What cannot be established from source
 

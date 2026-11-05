@@ -243,8 +243,9 @@ Nothing is replicated or pruned, and the ledger holds fingerprints and counts, n
 
 ## Configuring and running production
 
-See [docs/OPERATIONS.md](docs/OPERATIONS.md) for secrets, monitoring, backup and recovery, rotation and
-incident response, [docs/WIRE_FORMATS.md](docs/WIRE_FORMATS.md) for what an issuer must produce, and
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for a step-by-step deployment checklist (roles, files, database
+privileges, acceptance tests), [docs/OPERATIONS.md](docs/OPERATIONS.md) for secrets, monitoring, backup and recovery,
+rotation and incident response, [docs/WIRE_FORMATS.md](docs/WIRE_FORMATS.md) for what an issuer must produce, and
 [docs/RELEASE_BOUNDARY.md](docs/RELEASE_BOUNDARY.md) for the envelope, the checks and the denial codes.
 `pip install "zts[production]"` pulls every optional dependency. The assembly:
 
@@ -386,9 +387,9 @@ Numbers above are from one run on one machine. Run `zts bench` for yours.
 ## Tests
 
 ```bash
-pytest   # 337 pass, 21 skip with nothing optional installed
-pytest   # 1000 pass with every extra, a PostgreSQL server and openssl, on the pinned Enforcer 0.1.1
-pytest   # 993 pass, 7 skip on Enforcer 0.1.0 (still supported; the 0.1.1 additions are skipped)
+pytest   # 337 pass, 23 skip with nothing optional installed
+pytest   # 1031 pass with every extra, a PostgreSQL server and openssl, on the pinned Enforcer 0.1.1
+pytest   # 1014 pass, 17 skip on Enforcer 0.1.0 (still supported; the 0.1.1 additions are skipped)
 ```
 
 The skips are whole modules that need a real package or server: CNS, Enforcer, PostgreSQL binaries,
