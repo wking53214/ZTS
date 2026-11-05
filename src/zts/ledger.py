@@ -145,6 +145,11 @@ class ValLedger:
     def anchored(self) -> bool:
         return self._anchor is not None
 
+    @property
+    def anchor(self) -> LedgerAnchor | None:
+        """The anchor, or None. Read-only; for deployment checks."""
+        return self._anchor
+
     def __len__(self) -> int:
         return len(self._entries)
 

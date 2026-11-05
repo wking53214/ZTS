@@ -427,6 +427,11 @@ class DeterministicIntegrityTower:
             # either: the failure is counted and shows up in metrics and health().
             self.metrics.observer_failed()
 
+    @property
+    def release_signature_key_supplied(self) -> bool:
+        """True if the release signature key was passed in, False if it is random for this process."""
+        return self._key_supplied
+
     def readiness(self) -> ReadinessReport:
         """Every configuration and runtime check, each PASS, FAIL or UNKNOWN. See zts.ops."""
         return ReadinessReport(check_configuration(self) + check_runtime(self))

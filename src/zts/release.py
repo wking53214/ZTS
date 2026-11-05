@@ -389,6 +389,16 @@ class EnforcerReleaseGate:
     def policy_version(self) -> str:
         return self._policy_version
 
+    @property
+    def enforcer(self) -> Any:
+        """The Enforcer this gate calls. Read-only; for deployment checks, not a way to call it."""
+        return self._enforcer
+
+    @property
+    def dock(self) -> CNSDock:
+        """The CNS dock this gate uses. Read-only; for deployment checks."""
+        return self._dock
+
     # ------------------------------------------------------------------ API
 
     def release(
