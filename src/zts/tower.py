@@ -236,6 +236,9 @@ class DeterministicIntegrityTower:
         if self._closing:
             raise TowerClosedError("the tower is closed")
         started = time.perf_counter_ns()
+        held = self._hold_if_anchor_behind(started)
+        if held is not None:
+            return held
 
         intake = self.lc.intake(payload)
         self.ledger.log("LC", "PASS", "ingestion normalized", intake)
@@ -269,6 +272,10 @@ class DeterministicIntegrityTower:
         if self._closing:
             raise TowerClosedError("the tower is closed")
         started = time.perf_counter_ns()
+        # Off the event loop: when the anchor is behind this may wait for the TSA (bounded by its timeout).
+        held = await asyncio.to_thread(self._hold_if_anchor_behind, started)
+        if held is not None:
+            return held
         working_prompt = prompt
         result: SieveResult | None = None
         budget_seconds = 0.0
@@ -462,6 +469,23 @@ class DeterministicIntegrityTower:
     @property
     def inflight(self) -> int:
         return self._inflight
+
+    def _hold_if_anchor_behind(self, started: int) -> TowerResult | None:
+        """Admission check, made before the tower writes anything.
+
+        Entries that no timestamp covers can be removed without anyone noticing. Past the anchor's bound, a
+        new release is not started: nothing is filtered, no entry is written and no grant is spent, so the
+        uncovered tail cannot grow while the hold is open. A release already admitted runs to its end.
+        The sieve did not run, so the result carries an empty sieve whose verdict is BREACH: ``passed`` stays
+        False and nothing downstream can read it as content that was cleared.
+        """
+        if self.release_gate is None or self.ledger.anchor_behind() is None:
+            return None
+        empty = SieveResult(payload_in="", payload_out="", profile=self.profile.name, verdict=Verdict.BREACH)
+        outcome = self._held(empty, 0.0, 0, started, outcome=ReleaseState.NOT_ATTEMPTED,
+                             reason=ReleaseReason.ANCHOR_BEHIND)
+        self._observe(outcome)
+        return outcome
 
     def _held(
         self,

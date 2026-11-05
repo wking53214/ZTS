@@ -240,6 +240,32 @@ class ValLedger:
             flush()
         return True
 
+    def anchor_behind(self, *, catch_up: bool = True) -> str | None:
+        """Why the anchor is too far behind this ledger to take more entries, or None if it is not.
+
+        Only an anchor that can fall behind (a lazy one) has an answer; an eager one never does. With
+        ``catch_up`` the anchor is asked to stamp first, so a recovered TSA lifts the hold by itself.
+        Anything that goes wrong while asking counts as behind: a check that cannot be made is not a pass.
+        """
+        behind = getattr(self._anchor, "behind", None)
+        if behind is None:
+            return None
+        try:
+            with self._lock:
+                if self._store is not None:
+                    with self._exclusive():
+                        self._entries.extend(self._store.read_new(self.head, len(self._entries)))
+                if not self._entries:
+                    return None
+                newest = self._entries[-1]
+            reason = behind(newest.sequence)
+            if reason is not None and catch_up:
+                self._anchor.catch_up(newest.sequence, newest.digest)
+                reason = behind(newest.sequence)
+            return reason
+        except Exception:
+            return "unverifiable"
+
     def verify_anchored(self) -> tuple[bool, str]:
         """Walk the chain, then compare it with the head the anchor retained.
 

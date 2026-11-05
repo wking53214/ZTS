@@ -127,9 +127,11 @@ def test_a_tower_built_from_the_real_components_passes_production_validation(wor
     assert report.ready, [(c.name, c.detail) for c in report.failed]
     for name in ("enforcer_gate", "no_legacy_release_path", "durable_ledger", "ledger_anchor", "delivery_confirmer",
                  "enforcer_timeout", "release_signature_key", "proof_verifier", "status_source", "replay_store",
-                 "anchor_kind", "ledger_chain", "ledger_anchor_match", "anchor_service"):
+                 "anchor_kind", "ledger_chain", "ledger_anchor_match"):
         assert states[name] == "PASS", (name, [c.detail for c in report.checks if c.name == name])
-    for name in ("trust_root_governance", "identity_authentication", "anchor_independence", "replay_store_tls"):
+    # "anchor_service" is UNKNOWN until the TSA has answered once: a fresh tower has not tested it.
+    for name in ("trust_root_governance", "identity_authentication", "anchor_independence", "replay_store_tls",
+                 "anchor_service"):
         assert states[name] == "UNKNOWN", name
     assert report.fully_verified is False, "governance and independence can only be established by people"
 

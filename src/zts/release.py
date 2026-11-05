@@ -90,6 +90,8 @@ class ReleaseReason:
     POLICY_CHANGED = "POLICY_CHANGED"
     INVARIANT_VIOLATED = "PRODUCTION_INVARIANT_VIOLATED"
     IDENTITY_NOT_AUTHENTICATED = "IDENTITY_NOT_AUTHENTICATED"
+    #: The ledger anchor has fallen too far behind the ledger; no new release is attempted until it catches up.
+    ANCHOR_BEHIND = "ANCHOR_BEHIND"
     #: What Enforcer reports when it allows.
     ALLOWED = "VERIFIED_ACTION_BOUND_GRANT"
 
@@ -131,6 +133,7 @@ NOT_ATTEMPTED_REASONS = frozenset({
     ReleaseReason.SIEVE_BREACH,
     ReleaseReason.CANCELLED,
     ReleaseReason.SHUTTING_DOWN,
+    ReleaseReason.ANCHOR_BEHIND,
 })
 
 #: Reasons after which Enforcer may or may not have consumed the grant.

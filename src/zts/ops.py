@@ -231,7 +231,17 @@ def _probe_anchor(ledger: Any) -> list[Check]:
 
     if isinstance(anchor, Rfc3161Anchor):
         info = anchor.describe()
+        bounded = info["max_unanchored_entries"] is not None or info["max_unanchored_age"] is not None
         return [
+            _verdict(bounded, "anchor_backlog_bound",
+                     "new releases are refused once too many entries, or entries that are too old, have no timestamp",
+                     "no bound: while the TSA is unreachable the unstamped tail grows without limit, and removing "
+                     "it cannot be detected"),
+            Check("receipt_export", UNKNOWN,
+                  "a hook receives every receipt; whether its destination is out of the ledger writer's reach is a "
+                  "deployment fact" if info["exports_receipts"] else
+                  "no export hook: receipts exist only beside the ledger, so an attacker who rewrites both is not "
+                  "detected"),
             Check("anchor_kind", PASS, f"RFC 3161 time-stamp anchor with {info['pinned_certificates']} pinned "
                                        "TSA certificate(s); tokens are re-verified on every read"),
             Check("anchor_independence", UNKNOWN,
@@ -432,8 +442,18 @@ def check_runtime(tower: Any) -> list[Check]:
     anchor = getattr(tower.ledger, "_anchor", None)
     last_error = getattr(anchor, "last_error", None)
     if anchor is not None and hasattr(anchor, "last_error"):
-        checks.append(_verdict(last_error is None, "anchor_service", "the last anchor publish succeeded",
-                               f"the last anchor publish failed: {last_error}"))
+        if last_error is None and getattr(anchor, "published", 1) == 0:
+            checks.append(Check("anchor_service", UNKNOWN, "the timestamp authority has not been asked yet; "
+                                                           "reachability is untested until the first release"))
+        else:
+            checks.append(_verdict(last_error is None, "anchor_service", "the last anchor publish succeeded",
+                                   f"the last anchor publish failed: {last_error}"))
+        why = tower.ledger.anchor_behind(catch_up=False)
+        checks.append(_verdict(why is None, "anchor_backlog", "the anchor is within its bound",
+                               f"the anchor is too far behind ({why}): new releases are refused until it catches up"))
+        if getattr(anchor, "last_export_error", None) is not None:
+            checks.append(Check("receipt_export_live", FAIL, "the last receipt could not be handed to the export "
+                                                             f"hook ({anchor.last_export_error}); re-export with receipts()"))
     checks.append(_verdict(not tower.closing, "accepting_work", "accepting releases", "the tower is closed or closing"))
     return checks
 
