@@ -25,10 +25,19 @@ What this does not provide, so nothing downstream claims more:
     release hosts INSERT and SELECT (and DELETE only for the pruning role).
   * Transport security. Put ``sslmode=verify-full`` in the DSN. ``describe()`` reports it.
 
+Constraints are checked where they are used. The two uniqueness constraints are the whole safety
+argument, so ``consume`` confirms on every call that the table it is about to write to still has
+them, and refuses (a denial, ``REPLAY_STORE_ERROR``) if not. A table that already exists without them is
+refused when the store is built. The check and the insert are two statements, so someone who drops a
+constraint in the microseconds between them still wins one race; that needs database DDL rights, which
+is the same power as deleting the rows. Give release hosts no such rights.
+
 Retention. ``prune()`` deletes only rows whose recorded grant expiry is older than a grace
-period, so a pruned grant is already expired and Enforcer would refuse it for that reason.
-Rows with no recorded expiry are never pruned. Enforcer passes the expiry only from the
-release that adds it; older Enforcer releases leave it empty.
+period, judged by the DATABASE's clock, so a pruning host with a fast clock cannot delete a live
+grant. The grace period has a floor (``MIN_GRACE``). It must still exceed the clock difference between
+the database and every release host, so keep clocks within seconds. Rows with no recorded expiry
+are never pruned. Enforcer passes the expiry only from the release that adds it; older Enforcer
+releases leave it empty.
 
 Needs ``pip install zts[replay-postgres]``.
 """
@@ -38,12 +47,14 @@ from __future__ import annotations
 import re
 import threading
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
 
 # The table name is interpolated into SQL (identifiers cannot be bound). It is accepted only if it matches
 # this strict pattern, checked once in the constructor, so no caller-supplied text reaches a query.
 _IDENT = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
+#: The shortest grace period ``prune`` accepts: well above Enforcer's clock-skew allowance (5 s by default).
+MIN_GRACE = timedelta(seconds=30)
 
 
 class ReplayStoreError(RuntimeError):
@@ -127,6 +138,9 @@ class PostgresReplayStore:
                     "issuer_id text NOT NULL, nonce text NOT NULL, request_id text NOT NULL, "
                     "consumed_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz, "
                     "PRIMARY KEY (issuer_id, nonce), UNIQUE (request_id))")
+                if not self._constraints_present(conn):
+                    # CREATE ... IF NOT EXISTS keeps whatever was already there, constraints or not.
+                    raise ReplayStoreError(f"table {t} exists without its uniqueness constraints; refusing to use it")
         except ReplayStoreError:
             raise
         except Exception as exc:
@@ -140,7 +154,10 @@ class PostgresReplayStore:
         if expires_at is not None and (expires_at.tzinfo is None or expires_at.utcoffset() is None):
             raise ReplayStoreError("expires_at must be timezone-aware")
         try:
-            cur = self._conn().execute(
+            conn = self._conn()
+            if not self._constraints_present(conn):
+                raise ReplayStoreError("the replay table is missing a uniqueness constraint; every release is denied")
+            cur = conn.execute(
                 f"INSERT INTO {self._table} (issuer_id, nonce, request_id, expires_at) "  # nosec B608
                 "VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
                 (issuer_id, nonce, request_id, expires_at))
@@ -154,13 +171,25 @@ class PostgresReplayStore:
     # ---------------------------------------------------------- retention and health
 
     def prune(self, grace: timedelta = timedelta(minutes=1), *, now: datetime | None = None) -> int:
-        """Delete rows whose grant expired more than ``grace`` ago. Never touches rows without an expiry."""
-        if grace < timedelta(0):
-            raise ValueError("grace cannot be negative")
-        cutoff = (now or datetime.now(timezone.utc)) - grace
+        """Delete rows whose grant expired more than ``grace`` ago. Never touches rows without an expiry.
+
+        "Ago" is by the database's clock unless ``now`` is given. ``now`` is for tests and for a pruning job
+        that deliberately runs against a restored copy; a host clock is not trusted by default, because a
+        fast one would delete grants that are still valid and let them be used again.
+        """
+        if grace < MIN_GRACE:
+            raise ValueError(f"grace cannot be shorter than {MIN_GRACE.total_seconds():.0f} seconds")
+        if now is not None and (now.tzinfo is None or now.utcoffset() is None):
+            raise ValueError("now must be timezone-aware")
         try:
-            cur = self._conn().execute(
-                f"DELETE FROM {self._table} WHERE expires_at IS NOT NULL AND expires_at < %s", (cutoff,))  # nosec B608
+            if now is None:
+                cur = self._conn().execute(
+                    f"DELETE FROM {self._table} WHERE expires_at IS NOT NULL AND expires_at < now() - %s",  # nosec B608
+                    (grace,))
+            else:
+                cur = self._conn().execute(
+                    f"DELETE FROM {self._table} WHERE expires_at IS NOT NULL AND expires_at < %s",  # nosec B608
+                    (now - grace,))
             return cur.rowcount
         except ReplayStoreError:
             raise
@@ -168,20 +197,25 @@ class PostgresReplayStore:
             self._drop()
             raise ReplayStoreError(f"prune failed: {type(exc).__name__}") from None
 
-    def health(self) -> bool:
-        """Reachable, and the two uniqueness constraints this store depends on are really there."""
-        try:
-            rows = self._conn().execute(
-                "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c "
-                "WHERE c.conrelid = to_regclass(%s) AND c.contype IN ('p', 'u')", (self._table,)).fetchall()
-        except Exception:
-            self._drop()
-            return False
+    def _constraints_present(self, conn: Any) -> bool:
+        """Do the two uniqueness constraints exist on the table this connection resolves the name to?"""
+        rows = conn.execute(
+            "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c "
+            "WHERE c.conrelid = to_regclass(%s) AND c.contype IN ('p', 'u')", (self._table,)).fetchall()
         defs = {row[0].replace('"', "") for row in rows}
         return "PRIMARY KEY (issuer_id, nonce)" in defs and "UNIQUE (request_id)" in defs
 
+    def health(self) -> bool:
+        """Reachable, and the two uniqueness constraints this store depends on are really there."""
+        try:
+            return self._constraints_present(self._conn())
+        except Exception:
+            self._drop()
+            return False
+
     def describe(self) -> dict[str, Any]:
-        info: dict[str, Any] = {"kind": "postgresql", "durable": True, "shared": True, "table": self._table}
+        info: dict[str, Any] = {"kind": "postgresql", "durable": True, "shared": True, "table": self._table,
+                                "constraints_checked_each_consume": True}
         if self._dsn:
             try:
                 parsed = _psycopg().conninfo.conninfo_to_dict(self._dsn)

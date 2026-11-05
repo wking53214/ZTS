@@ -293,9 +293,10 @@ def test_production_validation_refuses_when_a_real_component_is_missing_or_weak(
 def test_production_refuses_a_replay_table_that_has_lost_a_uniqueness_constraint(world):
     """Without UNIQUE(request_id) a release id could be reused. The tower must not start on that table."""
     import psycopg
-    from zts import ProductionConfigError
+    from zts.replay_postgres import ReplayStoreError
     PostgresReplayStore(world.shared.cluster.dsn, table=world.shared.table).close()
     with psycopg.connect(world.shared.cluster.dsn, autocommit=True) as c:
         c.execute(f"ALTER TABLE {world.shared.table} DROP CONSTRAINT {world.shared.table}_request_id_key")
-    with pytest.raises(ProductionConfigError, match="replay_store"):
+    # The store itself now refuses such a table when it is built, before the tower's startup validation runs.
+    with pytest.raises(ReplayStoreError, match="uniqueness constraints"):
         world.make("z")
