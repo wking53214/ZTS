@@ -121,10 +121,22 @@ class HttpStatusRevalidator:
         self._transport = transport or (lambda url, body, t: https_post(url, body, t, ssl_context))
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._on_reject = on_reject
+        # What readiness may say about the channel. A caller-supplied transport is opaque, so it is
+        # never called verified; a context that does not demand a certificate and a host name is not either.
+        if transport is not None:
+            self._tls = "custom_transport"
+        else:
+            context = ssl_context or ssl.create_default_context()
+            self._tls = "verified" if context.verify_mode == ssl.CERT_REQUIRED and context.check_hostname \
+                else "unverified"
 
     @property
     def revalidator_id(self) -> str:
         return f"zts-http-status/{self._host}"
+
+    def describe(self) -> dict[str, Any]:
+        """``tls`` is ``verified``, ``unverified`` or ``custom_transport`` (ZTS cannot see inside it)."""
+        return {"kind": "https-status", "host": self._host, "tls": self._tls, "timeout": self._timeout}
 
     def revalidate(self, envelope: Any, claims: Any) -> Any:
         import enforcer  # lazy: Enforcer is optional for importing zts

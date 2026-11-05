@@ -127,9 +127,11 @@ def test_a_tower_built_from_the_real_components_passes_production_validation(wor
     assert report.ready, [(c.name, c.detail) for c in report.failed]
     for name in ("enforcer_gate", "no_legacy_release_path", "durable_ledger", "ledger_anchor", "delivery_confirmer",
                  "enforcer_timeout", "release_signature_key", "proof_verifier", "status_source", "replay_store",
-                 "anchor_kind", "ledger_chain", "ledger_anchor_match", "anchor_service"):
+                 "anchor_kind", "ledger_chain", "ledger_anchor_match"):
         assert states[name] == "PASS", (name, [c.detail for c in report.checks if c.name == name])
-    for name in ("trust_root_governance", "identity_authentication", "anchor_independence", "replay_store_tls"):
+    # "anchor_service" is UNKNOWN until the TSA has answered once: a fresh tower has not tested it.
+    for name in ("trust_root_governance", "identity_authentication", "anchor_independence", "replay_store_tls",
+                 "anchor_service"):
         assert states[name] == "UNKNOWN", name
     assert report.fully_verified is False, "governance and independence can only be established by people"
 
@@ -293,9 +295,10 @@ def test_production_validation_refuses_when_a_real_component_is_missing_or_weak(
 def test_production_refuses_a_replay_table_that_has_lost_a_uniqueness_constraint(world):
     """Without UNIQUE(request_id) a release id could be reused. The tower must not start on that table."""
     import psycopg
-    from zts import ProductionConfigError
+    from zts.replay_postgres import ReplayStoreError
     PostgresReplayStore(world.shared.cluster.dsn, table=world.shared.table).close()
     with psycopg.connect(world.shared.cluster.dsn, autocommit=True) as c:
         c.execute(f"ALTER TABLE {world.shared.table} DROP CONSTRAINT {world.shared.table}_request_id_key")
-    with pytest.raises(ProductionConfigError, match="replay_store"):
+    # The store itself now refuses such a table when it is built, before the tower's startup validation runs.
+    with pytest.raises(ReplayStoreError, match="uniqueness constraints"):
         world.make("z")

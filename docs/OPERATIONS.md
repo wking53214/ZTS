@@ -49,7 +49,11 @@ proof verifier, status source or replay store: those report UNKNOWN, and a deplo
 and exercise them itself.
 
 Call `tower.readiness()` for the full list (PASS / FAIL / UNKNOWN with a reason) and
-`tower.health()` for a live status (`ok`, `degraded`, `closed`).
+`tower.health()` for a live status (`ok`, `degraded`, `closed`). Health re-checks the live state of what ZTS can
+see: the ledger chain and anchor, the anchor backlog, whether each trust-root role still has a usable key, and
+for PostgreSQL whether the replay table still answers and keeps both constraints. A status client whose TLS
+context does not demand a verified certificate and host name FAILS readiness; one that uses a caller-supplied
+transport is UNKNOWN. `sslmode=verify-ca` is UNKNOWN (it does not check the host name); use `verify-full`.
 
 ## 3. Secrets and files
 
@@ -68,7 +72,12 @@ Call `tower.readiness()` for the full list (PASS / FAIL / UNKNOWN with a reason)
   grants expire, then mark the old key `revoked`. To revoke after compromise: set `status` to `revoked`; every
   grant under that key fails from the next check. Protect the file: mode 644 or stricter, and restrict who can
   write it, because whoever can edit it decides who may release. A broken edit refuses everything until fixed.
-  Optionally pin its SHA-256 out of band (`FileTrustRoot(..., expected_sha256=)`).
+  **Keep an older copy from being put back** (it would un-revoke a key): raise `"serial"` in the file on every
+  edit and give `FileTrustRoot` a serial store, `PostgresSerialStore` (the replay database is the natural home)
+  or `FileSerialStore` on one host. Rotation then stays hot. The alternative is a pinned digest
+  (`expected_sha256=`), which needs a restart per rotation. Readiness reports `trust_root_rollback` UNKNOWN until
+  one of them is in place. A serial store does not stop someone who can write the file from authoring a new one
+  with a higher serial. Keep the serial store's writers and the trust-root file's writers apart.
 * **TSA certificate rotation:** the pinned certificate is the TSA's signing certificate itself. When the TSA
   rotates, pin the new one **in addition**, keep the old one until its receipts are no longer needed, and
   expect old receipts to fail verification if you remove it.
@@ -92,6 +101,10 @@ release (tested).
 | `delivery_unknown` > 0 | A delivery began and could not be confirmed | Section 7, unknown delivery. Never auto-retry |
 | `audit_incomplete` > 0 | A delivery happened without a durable final record | Section 7, audit gap |
 | `anchor_failures` > 0, or `health()` lists `anchor_service` | The timestamp authority could not stamp a head; tamper evidence is behind | Section 7, anchor |
+| `ANCHOR_BEHIND` denials, or `health()` lists `anchor_backlog` | Too many ledger entries, or entries that are too old, have no timestamp, so new releases are refused until the TSA stamps again | Section 7, anchor |
+| `health()` lists `receipt_export_live` | The receipt export hook failed; the receipt is on this host only | Re-export with `anchor.receipts()` |
+| `health()` lists `trust_root_grant_keys`, `trust_root_status_keys` or `replay_store_live` | The trust root has no usable key or cannot be loaded (or was rolled back), or the replay table is unreachable or lost a constraint | Section 7 |
+| `unclassified_denials` > 0 | A denial code that is in no alert bucket, because someone added a code without deciding whether it is an alert | Classify it in `zts.ops` |
 | `on_reject` reasons `unknown_kid`, `revoked_key`, `bad_signature`, `unsupported_alg` | Someone presented a grant ZTS refuses; the reason says why | Treat `bad_signature` and `unsupported_alg` as attack signatures |
 | `health()["status"] != "ok"` | The ledger chain or its anchor no longer verifies, or a dependency cannot be imported | Section 7, ledger integrity |
 
@@ -121,13 +134,19 @@ means "the result was not returned", **not** "nothing happened". Read the ledger
 * **Restoring** the replay database from an old backup re-opens every grant spent since. Treat a
   restore as a security event; wait out the grant lifetime (Enforcer's default maximum is 5
   minutes) before accepting releases, or restore from a backup newer than that.
-* **Receipts.** Copy the RFC 3161 receipts file somewhere the ledger's writer cannot reach. Without that, an
+* **Receipts.** Copy the RFC 3161 receipts somewhere the ledger's writer cannot reach. Without that, an
   attacker who restores an older ledger *and* the matching older receipts is invisible. With an off-box
-  copy, the newest receipt proves how far the ledger had got.
+  copy, the newest receipt proves how far the ledger had got. `Rfc3161Anchor(on_receipt=fn)` calls `fn` with each
+  receipt (a dict: `gen_time`, `head`, `sequence`, `token`) as soon as it is durable here, so an append-only or
+  object-locked store can keep a copy. A failing hook never undoes a release; it shows as `receipt_export_live`
+  in `health()`, and `anchor.receipts()` lists everything for a re-export. Whether the destination is out of the
+  writer's reach is a deployment fact ZTS cannot check.
 * **Retention.** ZTS never prunes the ledger or its anchor; archive by copying, and do not truncate a live
   ledger. The PostgreSQL replay table can be pruned: `PostgresReplayStore.prune()` deletes only rows whose
-  grant expired longer ago than a grace period (which is safe, because an expired grant is refused before the
-  store is consulted). It needs Enforcer 0.1.1 to record each grant's expiry; rows without one are never
+  grant expired longer ago than a grace period, judged by the **database's** clock (a pruning host with a fast
+  clock cannot delete a live grant), with a floor of 30 s on the grace period. Keep the database and release
+  hosts' clocks within seconds of each other. Pruning is safe because an expired grant is refused before the
+  store is consulted. It needs Enforcer 0.1.1 to record each grant's expiry; rows without one are never
   pruned. Run it with a database role that may `DELETE`; give the release hosts `INSERT`/`SELECT` only.
 
 ## 7. Incident response
@@ -155,9 +174,14 @@ spent grants stay spent. Do not set `capstone=AUTO` to "get unstuck". It is refu
 `production=True`, and if you do remove that, it performs no authorization at all.
 
 **Anchor failure.** Deliveries continue and `audit_anchored` is False until stamping works again; the next
-release's flush anchors everything written so far, so a short outage leaves no permanent gap. A long outage
-means the unanchored tail is only as trustworthy as the ledger file itself. Check the TSA, its certificate,
-and the clock; do not delete receipts.
+release's flush anchors everything written so far, so a short outage leaves no permanent gap. Entries after the
+last timestamp are only as trustworthy as the ledger file itself: removing them cannot be detected. So the
+tail is bounded (`max_unanchored_entries`, default 500, and `max_unanchored_age`, default 300 s). Past either,
+a new release is refused before anything is filtered or written, with outcome `not_attempted` and reason
+`ANCHOR_BEHIND`, and each refused attempt asks the TSA again (at most once per `min_interval`), so the hold
+lifts by itself when the TSA answers. Set the bound above the entries one release writes (about 11) times the
+releases you run at once. A tail found at startup counts from the start. Check the TSA, its certificate, and
+the clock; do not delete receipts.
 
 **Key compromise.** Issuer key: mark it `revoked` in the trust root (every grant under it fails from the next
 check), issue a new key, and treat releases made under the old key since the suspected compromise as

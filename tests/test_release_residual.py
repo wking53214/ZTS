@@ -151,7 +151,8 @@ def test_known_limit_authorization_revoked_after_enforcers_check_but_before_deli
 
     ZTS does not ask again, because asking again would mean re-implementing Enforcer's
     revalidation inside ZTS. The window is the time between Enforcer's last status check and the
-    effect of the delivery callback; it is bounded by Enforcer's freshness limit, not eliminated.
+    start of the delivery callback; it is bounded by the gate's timeout (Enforcer's freshness limit is checked
+    once, before the grant is consumed, so it does not bound this), and it is not eliminated.
     """
     s = build(tmp_path)
     original = s.status.revalidate

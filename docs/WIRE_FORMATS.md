@@ -80,6 +80,7 @@ A JSON file (mode 644 or stricter, owned by the running user or root):
 
 ```json
 {"version": 1,
+ "serial": 7,
  "keys": [{"kid": "ed25519-...", "issuer_id": "issuer-a", "role": "grant",
            "public_key": "<b64u raw 32 bytes>", "not_before": "...", "not_after": "...",
            "status": "active"}]}
@@ -88,8 +89,17 @@ A JSON file (mode 644 or stricter, owned by the running user or root):
 Unknown fields, duplicate ids, a wrong id, roles other than `grant`/`status`, statuses other than
 `active`/`revoked`, and a window that ends before it starts are refused, and the whole file is refused with
 them. The file is re-read when it changes. A change that breaks it makes **every** proof and status answer
-fail until it is fixed; there is no fallback to the old contents. Optionally pin the file's SHA-256 out of
-band (`FileTrustRoot(path, expected_sha256=...)`) and change the pin together with the file.
+fail until it is fixed; there is no fallback to the old contents.
+
+`serial` is optional: a positive integer that you raise on every edit. **Rollback.** Putting an older copy of the
+file back would un-revoke a key. There are two defences, and they trade off. Pin the file's SHA-256 out of band
+(`FileTrustRoot(path, expected_sha256=...)`): no other content is accepted, but every rotation needs a restart
+with the new pin. Or give `FileTrustRoot` a serial store (`FileSerialStore` on one host, `PostgresSerialStore`
+across hosts): rotation stays hot and any file whose `serial` is lower than one already accepted is refused, as is
+a different file claiming the same serial. A serial store does not stop someone who can write the file from
+writing a new one with a higher serial; that takes file permissions or a signed trust root. With a serial store a
+host re-checks every 30 s, so one whose file fell behind a newer root accepted elsewhere is refused rather than
+left on stale keys. A file without `serial` is refused when a serial store is configured.
 
 * **Rotate:** add the new key with a start time before first use, switch the issuer to it, let old grants
   expire, then mark the old key `revoked` (or let `not_after` pass).
@@ -116,5 +126,9 @@ CREATE TABLE zts_consumed_grants (
   PRIMARY KEY (issuer_id, nonce), UNIQUE (request_id));
 ```
 
-`PostgresReplayStore` creates it if missing and `production=True` refuses to start if either uniqueness
-constraint is gone. Give the release hosts `INSERT`/`SELECT`, and `DELETE` only to whatever runs `prune()`.
+`PostgresReplayStore` creates it if missing. A table that exists without either uniqueness constraint is refused
+when the store is built, and `consume` re-checks that both are present on every call, denying the release if not.
+Give the release hosts `INSERT`/`SELECT`, and `DELETE` only to whatever runs `prune()`.
+
+The trust-root serial store (`PostgresSerialStore`) keeps one row per name in `zts_trust_serial`
+(`name text PRIMARY KEY, serial bigint NOT NULL CHECK (serial > 0), digest text NOT NULL, updated_at`).

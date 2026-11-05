@@ -26,7 +26,13 @@ What this does NOT give you, so nothing downstream claims more:
     independent RFC 3161 implementation, not against a public service.
   * Timeliness. To keep a release from waiting on the network for every ledger entry,
     publishing is lazy: a head is stamped when ``min_interval`` seconds have passed, or when
-    ``flush()`` is called. Entries after the last stamped head are not covered yet.
+    ``flush()`` is called. Entries after the last stamped head are not covered yet, and
+    ``verify_anchored`` cannot see them removed. So the uncovered tail is bounded: once more than
+    ``max_unanchored_entries`` entries, or more than ``max_unanchored_age`` seconds, are waiting for
+    a stamp, :meth:`behind` says so and the tower refuses new releases until the TSA catches up.
+  * Custody. The receipts file sits beside the ledger. ``on_receipt`` hands every receipt to a
+    function you supply the moment it is durable, so a copy can be kept somewhere the ledger's
+    writer cannot rewrite. ZTS cannot tell whether that place is out of the writer's reach.
 
 Needs ``pip install zts[tsa]``.
 """
@@ -267,9 +273,22 @@ class Rfc3161Anchor:
         transport: Callable[[str, bytes, float], bytes] | None = None,
         clock: Callable[[], datetime] | None = None,
         max_clock_skew: timedelta = timedelta(minutes=5),
+        max_unanchored_entries: int | None = 500,
+        max_unanchored_age: float | None = 300.0,
+        on_receipt: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         if not isinstance(timeout, (int, float)) or timeout <= 0 or min_interval < 0:
             raise ValueError("timeout must be positive and min_interval cannot be negative")
+        if max_unanchored_entries is not None and (
+                not isinstance(max_unanchored_entries, int) or isinstance(max_unanchored_entries, bool)
+                or max_unanchored_entries < 1):
+            raise ValueError("max_unanchored_entries must be a positive integer, or None for no bound")
+        if max_unanchored_age is not None and (
+                not isinstance(max_unanchored_age, (int, float)) or isinstance(max_unanchored_age, bool)
+                or max_unanchored_age <= 0):
+            raise ValueError("max_unanchored_age must be a positive number of seconds, or None for no bound")
+        if on_receipt is not None and not callable(on_receipt):
+            raise TypeError("on_receipt must be callable")
         self._url = tsa_url
         self._pinned = load_pinned(tsa_certificates)
         self._path = Path(receipts_path)
@@ -284,6 +303,20 @@ class Rfc3161Anchor:
         #: The last error from a lazy publish or a flush, for health checks. None when the last one worked.
         self.last_error: str | None = None
         self.failures = 0
+        #: Receipts written by this object. Zero means the TSA has never answered it.
+        self.published = 0
+        self._max_entries, self._max_age = max_unanchored_entries, max_unanchored_age
+        self._on_receipt = on_receipt
+        self.export_failures = 0
+        self.last_export_error: str | None = None
+        self._last_attempt = float("-inf")
+        self._pending_since: float | None = None  # when the oldest unstamped entry was first seen
+        try:
+            latest = self.latest()
+        except Exception:  # an unreadable receipts file is reported by verify_anchored, not here
+            latest = None
+        #: Sequence of the newest stamped entry, or -1.
+        self._stamped_seq = latest[0] if latest else -1
 
     # ------------------------------------------------------------- the anchor seam
 
@@ -295,6 +328,8 @@ class Rfc3161Anchor:
         """
         with self._lock:
             self._pending = (sequence, head)
+            if self._pending_since is None:
+                self._pending_since = time.monotonic()
             if time.monotonic() - self._last_publish < self._min_interval:
                 return
         try:
@@ -314,12 +349,13 @@ class Rfc3161Anchor:
             if self._pending is None:
                 return False
             sequence, head = self._pending
+            self._last_attempt = time.monotonic()
         try:
             digest = head_digest(sequence, head)
             nonce = secrets.randbits(63) + 1
             raw = self._transport(self._url, build_request(digest, nonce), self._timeout)
             token_der, stamped = self._accept(raw, digest, nonce)
-            self._append(sequence, head, stamped, token_der)
+            receipt = self._append(sequence, head, stamped, token_der)
         except TimestampError as exc:
             with self._lock:
                 self.failures += 1
@@ -331,11 +367,69 @@ class Rfc3161Anchor:
                 self.last_error = f"unexpected: {type(exc).__name__}"
             raise TimestampError("the head could not be stamped") from None
         with self._lock:
+            self.published += 1
+            self._stamped_seq = max(self._stamped_seq, sequence)
             if self._pending == (sequence, head):
-                self._pending = None
+                self._pending, self._pending_since = None, None
+            else:
+                self._pending_since = time.monotonic()  # a newer head arrived while this one was out
             self._last_publish = time.monotonic()
             self.last_error = None
+        self._export(receipt)
         return True
+
+    # ------------------------------------------------------------- backlog and custody
+
+    def behind(self, head_sequence: int) -> str | None:
+        """None if the stamped head is close enough to ``head_sequence`` (the ledger's newest entry).
+
+        Otherwise ``"entries"`` or ``"age"``: too many entries, or entries that have waited too long,
+        are not covered by any timestamp, so removing them would go unnoticed.
+        """
+        with self._lock:
+            waiting = head_sequence - self._stamped_seq
+            if waiting <= 0:
+                self._pending_since = None
+                return None
+            if self._pending_since is None:  # found at startup or after a gap: count from now, never from never
+                self._pending_since = time.monotonic()
+            if self._max_entries is not None and waiting > self._max_entries:
+                return "entries"
+            if self._max_age is not None and time.monotonic() - self._pending_since > self._max_age:
+                return "age"
+            return None
+
+    def catch_up(self, head_sequence: int, head: str) -> None:
+        """Try to stamp ``head`` now, unless a try was made less than ``min_interval`` ago.
+
+        Without this a tower that stopped releasing because the anchor fell behind would never write
+        another entry, so nothing would ever ask the TSA again. Never raises.
+        """
+        with self._lock:
+            if time.monotonic() - self._last_attempt < self._min_interval:
+                return
+            if self._pending is None or self._pending[0] < head_sequence:
+                self._pending = (head_sequence, head)
+        try:
+            self.flush()
+        except TimestampError:
+            pass  # recorded by flush(); the caller asks behind() again
+
+    def receipts(self) -> list[dict[str, Any]]:
+        """Every stored receipt, as written. Not re-verified here: use :meth:`verify_all`. For re-export."""
+        return self._read()
+
+    def _export(self, receipt: dict[str, Any]) -> None:
+        if self._on_receipt is None:
+            return
+        try:
+            self._on_receipt(dict(receipt))
+            with self._lock:
+                self.last_export_error = None
+        except Exception as exc:  # the receipt is already durable here; a failed copy is reported, never fatal
+            with self._lock:
+                self.export_failures += 1
+                self.last_export_error = f"{type(exc).__name__}"
 
     def latest(self) -> tuple[int, str] | None:
         """The newest receipt, re-verified against the pinned certificates. None if there are none."""
@@ -351,7 +445,9 @@ class Rfc3161Anchor:
 
     def describe(self) -> dict[str, Any]:
         return {"kind": "rfc3161", "url": self._url, "pinned_certificates": len(self._pinned),
-                "min_interval": self._min_interval, "failures": self.failures}
+                "min_interval": self._min_interval, "failures": self.failures,
+                "max_unanchored_entries": self._max_entries, "max_unanchored_age": self._max_age,
+                "exports_receipts": self._on_receipt is not None, "export_failures": self.export_failures}
 
     def close(self) -> None:
         if self._fd >= 0:
@@ -379,9 +475,10 @@ class Rfc3161Anchor:
             raise TimestampError("the stamped time is too far from this machine's clock")
         return token_der, stamped
 
-    def _append(self, sequence: int, head: str, stamped: datetime, token_der: bytes) -> None:
-        line = (json.dumps({"gen_time": stamped.isoformat(), "head": head, "sequence": sequence,
-                            "token": base64.b64encode(token_der).decode("ascii")}, sort_keys=True) + "\n").encode()
+    def _append(self, sequence: int, head: str, stamped: datetime, token_der: bytes) -> dict[str, Any]:
+        receipt = {"gen_time": stamped.isoformat(), "head": head, "sequence": sequence,
+                   "token": base64.b64encode(token_der).decode("ascii")}
+        line = (json.dumps(receipt, sort_keys=True) + "\n").encode()
         with _Locked(self._fd):
             try:
                 import os
@@ -390,6 +487,7 @@ class Rfc3161Anchor:
                 os.fsync(self._fd)
             except OSError as exc:
                 raise TimestampError("the receipt could not be written durably") from exc
+        return receipt
 
     def _read(self) -> list[dict[str, Any]]:
         with _Locked(self._fd):
