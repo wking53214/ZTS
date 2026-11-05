@@ -78,6 +78,9 @@ transport is UNKNOWN. `sslmode=verify-ca` is UNKNOWN (it does not check the host
   (`expected_sha256=`), which needs a restart per rotation. Readiness reports `trust_root_rollback` UNKNOWN until
   one of them is in place. A serial store does not stop someone who can write the file from authoring a new one
   with a higher serial. Keep the serial store's writers and the trust-root file's writers apart.
+  The file and every directory above it (and above any symlink target) must be owned by the service user or
+  root and not writable by others; ZTS refuses the trust root otherwise, on every use. Keep the file in a
+  directory only root or the service user can write.
 * **TSA certificate rotation:** the pinned certificate is the TSA's signing certificate itself. When the TSA
   rotates, pin the new one **in addition**, keep the old one until its receipts are no longer needed, and
   expect old receipts to fail verification if you remove it.
@@ -167,6 +170,11 @@ reconciliation entry referencing the release id; do not edit existing entries.
 releasing (`close()`), preserve the file, restore from backup, and verify against the anchor. If
 only the anchor check fails, compare lengths: shorter ledger means truncation or rollback; an
 anchor one ahead means an interrupted write.
+
+**A slow or stalled endpoint.** The status client and the timestamp client each give up when their `timeout`
+is up for the WHOLE exchange (handshake, request and response), whatever the server does in between; a server
+that answers a byte at a time is cut off, not waited for. Name resolution and the TCP connect are not covered by
+that deadline (the operating system owns them), so keep the gate's `timeout` set: it bounds the release itself.
 
 **Enforcer, CNS, status source or issuer outage.** Releases are denied (`availability_failures`).
 That is the intended behavior: there is no fallback path. Restoring service restores releases;

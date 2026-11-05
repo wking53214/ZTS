@@ -84,8 +84,8 @@ keys absent from every output scanned. Findings, and their disposition:
 | Readiness said PASS for a status client with TLS verification off, for `verify-ca`, and for an anchor never reached | **Fixed** (FAIL, UNKNOWN, UNKNOWN) |
 | The tower's seal left the content sieve, time budget, signature key and the seal flag assignable | **Fixed**; reaching inside a sealed object is still possible in-process (a tested known limit) |
 | Receipts had no export path | **Added**: `on_receipt`; where it writes is the operator's |
-| Status and TSA timeouts are per operation, not a total deadline | **Open**: fails closed, but abandoned threads can accumulate against a slow endpoint |
-| Trust-root file: duplicate JSON keys resolve to the last, the parent directory and symlinks are not checked | **Open**, low |
+| Status and TSA timeouts were per operation, not a total deadline: a server sending a byte at a time kept a 1 s timeout from firing for over 12 s | **Fixed**: one deadline covers the TLS handshake, the request and the whole response; a watchdog closes the socket. **Not covered**: name resolution and the TCP connect (they block in the operating system); the gate's `timeout` still bounds the release itself |
+| Trust-root file: duplicate JSON keys resolved to the last; the parent directory and symlinks were not checked; the file was checked by path and then read by path | **Fixed**: repeated keys and NaN are refused; every directory that decides what the name means (parents, symlink targets followed one step at a time, the resolved file) must be owned by this user or root and not writable by others (a sticky directory like `/tmp` is accepted), checked on every use; the file is opened once and checked and read from that descriptor; only regular files up to 1 MiB |
 | Calling the delivery callback directly bypasses everything | **Not solvable in a library**: process isolation |
 
 ## What cannot be established from source
