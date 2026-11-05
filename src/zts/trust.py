@@ -40,6 +40,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import threading
 import time
 from collections.abc import Callable
@@ -53,6 +54,8 @@ ALGORITHM = "Ed25519"
 ROLE_GRANT = "grant"
 ROLE_STATUS = "status"
 MAX_PROOF_BYTES = 8192
+#: A trust root is a short list of keys. Anything bigger is refused rather than read into memory.
+MAX_TRUST_BYTES = 1 << 20
 
 _KID = re.compile(r"^ed25519-[0-9a-f]{16}$")
 _CLAIM_FIELDS = frozenset({
@@ -299,12 +302,74 @@ class FileSerialStore:
             self._lockfd = -1
 
 
-def _check_trust_file(path: Path) -> None:
-    info = path.stat()
+def _unsafe_directory(directory: Path) -> str | None:
+    """Why someone other than this user or root could replace what lives in ``directory``, or None."""
+    info = os.stat(directory)
     if info.st_uid not in (os.getuid(), 0):
-        raise TrustRootError(f"{path} is not owned by this user or root")
-    if info.st_mode & 0o022:
-        raise TrustRootError(f"{path} is writable by other users; set its mode to 644 or stricter")
+        return "is not owned by this user or root"
+    if info.st_mode & 0o022 and not info.st_mode & stat.S_ISVTX:
+        # A sticky directory (like /tmp) lets others add names but not remove or rename ours.
+        return "can be written by other users"
+    return None
+
+
+def _directories_that_decide(path: Path) -> list[Path]:
+    """Every directory whose contents decide which file ``path`` means.
+
+    The parents of the path as written, and of the target of each symbolic link on the way, followed one
+    step at a time (so a link that points at another link in a writable directory is seen), and of the
+    file it finally resolves to. A symlink is allowed, because configuration systems use them, but
+    whoever can change a link or the directory it sits in can point the name somewhere else.
+    """
+    found: set[Path] = set()
+    pending, visited = [os.path.abspath(path)], set()
+    while pending:  # `visited` is what stops a loop of links
+        name = pending.pop()
+        if name in visited:
+            continue
+        visited.add(name)
+        written = Path(name)
+        found.update(written.parents)
+        here = Path(written.anchor)
+        for part in written.parts[1:]:
+            here = here / part
+            if here.is_symlink():
+                pending.append(os.path.normpath(os.path.join(os.path.dirname(here), os.readlink(here))))
+    found.update(Path(os.path.realpath(path)).parents)
+    return sorted(found)
+
+
+def _read_trust_file(path: Path) -> tuple[bytes, os.stat_result]:
+    """Open the file ONCE, then check and read that same open file.
+
+    Checking a path and then reading the path leaves a gap in which the name can be pointed
+    elsewhere; here the owner, mode and kind are taken from the file descriptor that is read. The
+    directories are checked by the caller, on every use. ``O_NONBLOCK`` so that a FIFO put in
+    its place cannot make the open hang.
+    """
+    fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise TrustRootError(f"{path} is not a regular file")
+        if info.st_uid not in (os.getuid(), 0):
+            raise TrustRootError(f"{path} is not owned by this user or root")
+        if info.st_mode & 0o022:
+            raise TrustRootError(f"{path} is writable by other users; set its mode to 644 or stricter")
+        if info.st_size > MAX_TRUST_BYTES:
+            raise TrustRootError(f"{path} is larger than {MAX_TRUST_BYTES} bytes")
+        chunks, total = [], 0
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_TRUST_BYTES:
+                raise TrustRootError(f"{path} is larger than {MAX_TRUST_BYTES} bytes")
+            chunks.append(chunk)
+        return b"".join(chunks), info
+    finally:
+        os.close(fd)
 
 
 class FileTrustRoot:
@@ -368,15 +433,23 @@ class FileTrustRoot:
                 # ctime and mode are in the stamp so a chmod, which changes neither the contents
                 # nor the mtime, still forces the permission check to run again.
                 stamp = (info.st_mtime_ns, info.st_ctime_ns, info.st_size, info.st_ino, info.st_mode)
+                # The directories are checked on every use, not only on a reload: a directory made
+                # writable later changes nothing about the file, so the stamp would never notice.
+                for directory in _directories_that_decide(self.path):
+                    why = _unsafe_directory(directory)
+                    if why is not None:
+                        raise TrustRootError(f"{directory} {why}: whoever can write there can replace "
+                                             f"{self.path.name}")
                 if stamp != self._stamp or self._root is None:
-                    _check_trust_file(self.path)
-                    data = self.path.read_bytes()
+                    data, read = _read_trust_file(self.path)
+                    # The stamp describes the file that was actually read, not the one looked at first.
+                    stamp = (read.st_mtime_ns, read.st_ctime_ns, read.st_size, read.st_ino, read.st_mode)
                     if self._expected is not None and hashlib.sha256(data).hexdigest() != self._expected:
                         raise TrustRootError("the trust root file does not match its pinned digest")
                     try:
-                        doc = json.loads(data.decode("utf-8", errors="strict"))
-                    except (UnicodeDecodeError, ValueError):
-                        raise TrustRootError("the trust root file is not valid JSON") from None
+                        doc = strict_json(data)
+                    except Rejected:
+                        raise TrustRootError("the trust root file is not valid JSON, or repeats a key") from None
                     root = TrustRoot.from_dict(doc)
                     self._check_serial(root)  # before the root is used, and before it replaces the old one
                     self._root = root
