@@ -30,7 +30,7 @@ def test_a_table_that_loses_a_constraint_after_startup_denies_instead_of_replayi
     exp = real_now() + dt.timedelta(minutes=5)
     assert store.consume("i", "n1", "r1", expires_at=exp) is True
     with psycopg.connect(cluster.dsn, autocommit=True) as c:
-        for (name,) in c.execute("SELECT conname FROM pg_constraint WHERE conrelid = to_regclass(%s)", (table,)).fetchall():
+        for (name,) in c.execute("SELECT conname FROM pg_constraint WHERE conrelid = to_regclass(%s) AND contype IN ('p', 'u')", (table,)).fetchall():
             c.execute(f'ALTER TABLE {table} DROP CONSTRAINT "{name}"')
     for _ in range(2):  # before this change both calls returned True: the same grant, released twice
         with pytest.raises(ReplayStoreError, match="uniqueness constraint"):

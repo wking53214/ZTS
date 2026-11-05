@@ -165,7 +165,7 @@ def test_health_notices_when_the_replay_table_loses_a_constraint_after_startup(c
     tower = _tower(tmp_path, root, store)
     assert tower.health()["status"] == "ok"
     with psycopg.connect(cluster.dsn, autocommit=True) as c:
-        for (name,) in c.execute("SELECT conname FROM pg_constraint WHERE conrelid = to_regclass(%s)", (table,)).fetchall():
+        for (name,) in c.execute("SELECT conname FROM pg_constraint WHERE conrelid = to_regclass(%s) AND contype IN ('p', 'u')", (table,)).fetchall():
             c.execute(f'ALTER TABLE {table} DROP CONSTRAINT "{name}"')
     health = tower.health()
     assert health["status"] == "degraded" and "replay_store_live" in health["failed"]
