@@ -125,6 +125,11 @@ class HttpStatusRevalidator:
     def revalidator_id(self) -> str:
         return f"zts-http-status/{self._host}"
 
+    @property
+    def trust(self) -> "TrustRoot | FileTrustRoot":
+        """The trust root whose ``status`` keys this client accepts. Read-only; for deployment checks."""
+        return self._trust
+
     def describe(self) -> dict[str, Any]:
         """``tls`` is ``verified``, ``unverified`` or ``custom_transport`` (ZTS cannot see inside it)."""
         return {"kind": "https-status", "host": self._host, "tls": self._tls, "timeout": self._timeout}

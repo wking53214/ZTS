@@ -548,6 +548,11 @@ class Ed25519GrantVerifier:
         self._on_reject = on_reject
         self._max = max_proof_bytes
 
+    @property
+    def trust(self) -> "TrustRoot | FileTrustRoot":
+        """The trust root this verifier checks against. Read-only; for deployment checks."""
+        return self._trust
+
     def _root(self) -> TrustRoot:
         return self._trust.current() if isinstance(self._trust, FileTrustRoot) else self._trust
 

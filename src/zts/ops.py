@@ -210,7 +210,7 @@ def check_configuration(tower: Any) -> list[Check]:
         _verdict(gate is not None and gate.timeout is not None, "enforcer_timeout",
                  "the Enforcer call and the grant provider are time-bounded",
                  "no timeout: a hung authority hangs the release path"),
-        _verdict(bool(getattr(tower, "_key_supplied", False)), "release_signature_key",
+        _verdict(tower.release_signature_key_supplied, "release_signature_key",
                  "the release signature key was supplied, not generated per process",
                  "the release signature key is random per process: signatures cannot be verified after a restart"),
     ]
@@ -224,7 +224,7 @@ def check_configuration(tower: Any) -> list[Check]:
 
 
 def _probe_anchor(ledger: Any) -> list[Check]:
-    anchor = getattr(ledger, "_anchor", None)
+    anchor = getattr(ledger, "anchor", None)
     if anchor is None:
         return []
     from .anchor_tsa import Rfc3161Anchor
@@ -253,21 +253,66 @@ def _probe_anchor(ledger: Any) -> list[Check]:
                   "deployment fact")]
 
 
-def _probe_enforcer(gate: Any) -> list[Check]:
-    """Look at how Enforcer was configured. Enforcer exposes no accessor, so this reads private
-    attributes; if they are not there the answer is UNKNOWN, never PASS.
+#: What ZTS recommends for Enforcer's own limits. They are Enforcer's defaults, kept here on purpose: a
+#: deployment that loosens one is making a choice about how long a stolen or revoked grant stays usable,
+#: and readiness says so (UNKNOWN, never FAIL: the choice is the operator's).
+RECOMMENDED_LIMITS = {
+    "max_grant_lifetime_seconds": 300.0,
+    "allowed_clock_skew_seconds": 5.0,
+    "max_revalidation_age_seconds": 30.0,
+}
 
-    ZTS's own adapters (the Ed25519 verifier, the HTTPS status client, the PostgreSQL replay store)
-    can be inspected, so they can PASS for what this process verifies about them. Anything custom
-    stays UNKNOWN however it is named. Nothing here can say whether a trust root is *legitimate*.
+
+def _describe(gate: Any) -> dict[str, Any] | None:
+    """Enforcer's own account of how it is configured (``Enforcer.describe()``, 0.1.1 and later).
+
+    Identifiers, limits and the replay store's description; never the adapter objects. None when this
+    Enforcer cannot describe itself or the call fails: callers must treat that as UNKNOWN.
     """
-    enforcer = getattr(gate, "_enforcer", None)
+    describe = getattr(getattr(gate, "enforcer", None), "describe", None)
+    if not callable(describe):
+        return None
+    try:
+        out = describe()
+    except Exception:
+        return None
+    return out if isinstance(out, dict) else None
+
+
+def _adapters(gate: Any) -> tuple[Any, Any, Any]:
+    """The verifier, status source and replay store Enforcer was built with, or None for each it will not show.
+
+    ``Enforcer.describe()`` reports identifiers and facts, not the objects, and nothing else on Enforcer
+    returns them. ZTS needs the objects to say anything stronger than UNKNOWN about its own adapters
+    (how many usable keys a trust root holds, whether a TLS context verifies, whether a table still has its
+    constraints), and an identifier string is not enough: a custom adapter can copy one. So these three
+    reads of Enforcer's private attributes are the only ones left, kept in this one place. A missing
+    attribute gives None, and the checks then say UNKNOWN, never PASS. A supported accessor on Enforcer
+    would remove them.
+    """
+    enforcer = getattr(gate, "enforcer", None)
+    return (getattr(enforcer, "_verifier", None), getattr(enforcer, "_revalidator", None),
+            getattr(enforcer, "_replay_store", None))
+
+
+def _probe_enforcer(gate: Any) -> list[Check]:
+    """Look at how Enforcer was configured.
+
+    Identifiers, limits and the replay store come from Enforcer's public ``describe()``. ZTS's own
+    adapters (the Ed25519 verifier, the HTTPS status client, the PostgreSQL replay store) are inspected
+    as objects, so they can PASS for what this process verifies about them. Anything custom stays UNKNOWN
+    however it is named: facts taken from ``describe()`` can only produce FAIL or UNKNOWN, never PASS.
+    Nothing here can say whether a trust root is *legitimate*.
+    """
+    described = _describe(gate)
+    verifier, revalidator, store = _adapters(gate)
     checks = [
-        _probe_verifier(getattr(enforcer, "_verifier", None)),
-        _probe_rollback(getattr(enforcer, "_verifier", None)),
-        _probe_status(getattr(enforcer, "_revalidator", None), getattr(enforcer, "_verifier", None)),
+        _probe_verifier(verifier, (described or {}).get("verifier_id")),
+        _probe_rollback(verifier),
+        _probe_status(revalidator, verifier, (described or {}).get("revalidator_id")),
     ]
-    checks += _probe_replay_store(getattr(enforcer, "_replay_store", None))
+    checks += _probe_replay_store(store, (described or {}).get("replay_store"), described is not None)
+    checks.append(_probe_policy(described))
     verifier_hook = getattr(gate, "identity_verifier", None)
     checks.append(Check(
         "identity_authentication", UNKNOWN,
@@ -276,8 +321,25 @@ def _probe_enforcer(gate: Any) -> list[Check]:
     return checks
 
 
-def _generic_adapter(adapter: Any, id_attr: str, name: str) -> Check | None:
-    ident = getattr(adapter, id_attr, None)
+def _probe_policy(described: dict[str, Any] | None) -> Check:
+    name = "enforcer_policy"
+    policy = (described or {}).get("policy")
+    if not isinstance(policy, dict):
+        return Check(name, UNKNOWN, "this Enforcer cannot report its limits (describe() needs Enforcer 0.1.1 or later)")
+    looser = []
+    for key, recommended in RECOMMENDED_LIMITS.items():
+        value = policy.get(key)
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return Check(name, UNKNOWN, f"could not read {key}")
+        if value > recommended:
+            looser.append(f"{key.removesuffix('_seconds')} {value:g}s (recommended at most {recommended:g}s)")
+    if looser:
+        return Check(name, UNKNOWN, "looser than ZTS recommends: " + "; ".join(looser) + ". A longer limit "
+                                    "widens how long a stolen or revoked grant stays usable; confirm it is intended")
+    return Check(name, PASS, "Enforcer's grant lifetime, clock skew and status age are at or below the recommended limits")
+
+
+def _generic_adapter(ident: Any, name: str) -> Check | None:
     if not isinstance(ident, str):
         return Check(name, UNKNOWN, "could not read the adapter's identifier")
     if ident.startswith("reject-all"):
@@ -295,16 +357,16 @@ def _usable_keys(trust: Any, role: str) -> int:
     return sum(1 for k in root.keys.values() if k.role == role and k.usable_at(now))
 
 
-def _probe_verifier(verifier: Any) -> Check:
+def _probe_verifier(verifier: Any, described_id: Any = None) -> Check:
     name = "proof_verifier"
-    found = _generic_adapter(verifier, "verifier_id", name)
+    found = _generic_adapter(described_id if described_id is not None else getattr(verifier, "verifier_id", None), name)
     if found is not None:
         return found
     from .trust import Ed25519GrantVerifier, TrustRootError
 
     if isinstance(verifier, Ed25519GrantVerifier):
         try:
-            usable = _usable_keys(verifier._trust, "grant")
+            usable = _usable_keys(verifier.trust, "grant")
         except TrustRootError as exc:
             return Check(name, FAIL, f"the trust root cannot be loaded: {exc}")
         if usable == 0:
@@ -320,7 +382,7 @@ def _probe_rollback(verifier: Any) -> Check:
     name = "trust_root_rollback"
     from .trust import Ed25519GrantVerifier, FileTrustRoot
 
-    trust = getattr(verifier, "_trust", None)
+    trust = getattr(verifier, "trust", None)
     if not isinstance(verifier, Ed25519GrantVerifier) or not isinstance(trust, FileTrustRoot):
         return Check(name, UNKNOWN, "not a file trust root managed by ZTS: how an older copy is kept out is the "
                                     "operator's to establish")
@@ -335,9 +397,10 @@ def _probe_rollback(verifier: Any) -> Check:
                                 "un-revoke a key. Use a serial store or a pinned digest")
 
 
-def _probe_status(revalidator: Any, verifier: Any) -> Check:
+def _probe_status(revalidator: Any, verifier: Any, described_id: Any = None) -> Check:
     name = "status_source"
-    found = _generic_adapter(revalidator, "revalidator_id", name)
+    found = _generic_adapter(
+        described_id if described_id is not None else getattr(revalidator, "revalidator_id", None), name)
     if found is not None:
         return found
     from .status import HttpStatusRevalidator
@@ -345,7 +408,7 @@ def _probe_status(revalidator: Any, verifier: Any) -> Check:
 
     if isinstance(revalidator, HttpStatusRevalidator):
         try:
-            usable = _usable_keys(revalidator._trust, "status")
+            usable = _usable_keys(revalidator.trust, "status")
         except TrustRootError as exc:
             return Check(name, FAIL, f"the trust root cannot be loaded: {exc}")
         if usable == 0:
@@ -364,7 +427,9 @@ def _probe_status(revalidator: Any, verifier: Any) -> Check:
                                 "cannot verify what it does. Review and exercise it")
 
 
-def _probe_replay_store(store: Any) -> list[Check]:
+def _probe_replay_store(store: Any, described: Any = None, can_describe: bool = False) -> list[Check]:
+    """``described`` is the replay store's own description from ``Enforcer.describe()``. From it only a
+    FAIL or an UNKNOWN can come (a store can claim anything about itself); PASS needs the real object."""
     name = "replay_store"
     if store is None:
         return [Check(name, UNKNOWN, "could not read the replay store")]
@@ -392,14 +457,9 @@ def _probe_replay_store(store: Any) -> list[Check]:
             checks.append(Check("replay_store_tls", FAIL, f"sslmode={mode} to {host}: the replay database "
                                                          "connection is not verified TLS"))
         return checks
-    connection = getattr(store, "_connection", None)
-    if connection is not None:
-        try:
-            rows = connection.execute("PRAGMA database_list").fetchall()
-            files = [row[2] for row in rows if row[1] == "main"]
-        except Exception:
-            return [Check(name, UNKNOWN, "could not inspect the SQLite replay store")]
-        if files and files[0]:
+    sqlite = _sqlite_durability(store, described, can_describe)
+    if sqlite is not None:
+        if sqlite:
             return [Check(name, UNKNOWN, "file-backed SQLite: survives a restart on this host, but is not shared "
                                          "across hosts. Whether that matches the deployment is the operator's to confirm")]
         return [Check(name, FAIL, "in-memory SQLite: every spent grant is forgotten at restart")]
@@ -407,14 +467,34 @@ def _probe_replay_store(store: Any) -> list[Check]:
                                  "are the operator's to verify")]
 
 
+def _sqlite_durability(store: Any, described: Any, can_describe: bool) -> bool | None:
+    """Is this Enforcer's own SQLite replay store file-backed? None if it is not that store, or cannot be told.
+
+    Enforcer 0.1.1 says so in ``describe()``. Enforcer 0.1.0 has no ``describe()``, and in-memory
+    SQLite is exactly the configuration production must refuse, so for that release only the
+    connection is asked directly. This is a private read, kept for 0.1.0 alone.
+    """
+    if isinstance(described, dict) and described.get("kind") == "sqlite":
+        durable = described.get("durable")
+        return durable if isinstance(durable, bool) else None
+    if can_describe:
+        return None  # a modern Enforcer that did not describe a SQLite store: not that store
+    connection = getattr(store, "_connection", None)
+    if connection is None:
+        return None
+    try:
+        rows = connection.execute("PRAGMA database_list").fetchall()
+        files = [row[2] for row in rows if row[1] == "main"]
+    except Exception:
+        return None
+    return bool(files and files[0])
+
+
 def _runtime_adapters(gate: Any) -> list[Check]:
     """Live state of ZTS's own adapters. A configuration check passes once; these run on every health call,
     so a trust root that was emptied, rolled back or made unreadable, or a replay table that lost a
     constraint, shows up as degraded instead of staying "ok" until the next release is refused."""
-    enforcer = getattr(gate, "_enforcer", None)
-    verifier = getattr(enforcer, "_verifier", None)
-    revalidator = getattr(enforcer, "_revalidator", None)
-    store = getattr(enforcer, "_replay_store", None)
+    verifier, revalidator, store = _adapters(gate)
     out: list[Check] = []
     from .replay_postgres import PostgresReplayStore
     from .status import HttpStatusRevalidator
@@ -424,7 +504,7 @@ def _runtime_adapters(gate: Any) -> list[Check]:
                                      (revalidator, HttpStatusRevalidator, "status", "trust_root_status_keys")):
         if isinstance(adapter, cls):
             try:
-                usable = _usable_keys(adapter._trust, role)
+                usable = _usable_keys(adapter.trust, role)
             except TrustRootError as exc:
                 out.append(Check(name, FAIL, f"the trust root cannot be loaded: {exc}"))
                 continue
@@ -456,11 +536,11 @@ def check_runtime(tower: Any) -> list[Check]:
         except Exception as exc:
             checks.append(Check("enforcer_importable", FAIL, str(exc)))
         try:
-            gate._dock.connect()
+            gate.dock.connect()
             checks.append(Check("cns_importable", PASS, "CNS imports and is a supported release"))
         except Exception as exc:
             checks.append(Check("cns_importable", FAIL, str(exc)))
-    anchor = getattr(tower.ledger, "_anchor", None)
+    anchor = getattr(tower.ledger, "anchor", None)
     last_error = getattr(anchor, "last_error", None)
     if anchor is not None and hasattr(anchor, "last_error"):
         if last_error is None and getattr(anchor, "published", 1) == 0:
