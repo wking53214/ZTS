@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Phase 2 audit follow-up (fifth pass)
+
+Changed:
+- The status client (`https_post`) and the timestamp client (`http_post`) share one bounded POST
+  (`zts._http.bounded_post`). `timeout` is now the total time for the TLS handshake, the request and the
+  response, enforced by a watchdog that closes the socket, not the length of one wait. A response cut off by the
+  deadline is never returned as an answer. Name resolution and the TCP connect are not covered. Error texts
+  are unchanged, plus `did not answer within Ns`.
+- `FileTrustRoot` parses strictly (repeated keys, `NaN` and `Infinity` are refused), accepts only a regular file
+  of at most 1 MiB, opens it once and checks and reads that open file, and on every use checks the directories that
+  decide what the path means (parents, symlink targets one step at a time, the resolved file): owned by this user
+  or root, not writable by others, sticky directories accepted.
+
+
 ### Phase 2 audit hardening (fourth pass)
 
 Added:

@@ -86,6 +86,16 @@ A JSON file (mode 644 or stricter, owned by the running user or root):
            "status": "active"}]}
 ```
 
+The file is parsed as strictly as a grant: a repeated JSON key (at any depth), `NaN` and `Infinity` are refused,
+so an edit cannot hide a second `"status"` behind the first. It must be a regular file of at most 1 MiB, owned by
+the running user or root, not writable by group or others. Every directory that decides what the path means
+must also be owned by the running user or root and not writable by others: the parents of the path as written,
+the target of each symbolic link on the way (followed one step at a time), and the parents of the file it
+finally resolves to. Symbolic links are allowed, since configuration systems use them. A sticky directory such as
+`/tmp` is accepted, because others cannot replace a file they do not own there. These checks run on every use,
+so a directory made writable later is noticed. The file is opened once and its owner, mode and kind are read from
+that open file, so it cannot be swapped between the check and the read.
+
 Unknown fields, duplicate ids, a wrong id, roles other than `grant`/`status`, statuses other than
 `active`/`revoked`, and a window that ends before it starts are refused, and the whole file is refused with
 them. The file is re-read when it changes. A change that breaks it makes **every** proof and status answer

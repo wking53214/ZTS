@@ -41,7 +41,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import http.client
 import json
 import secrets
 import ssl
@@ -51,8 +50,8 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
+from ._http import HttpFailure, bounded_post
 from .ledger_store import LedgerCorruptionError, LedgerStoreError, _Locked, _open, _read_from, _write_all
 
 HEAD_DOMAIN = b"zts-ledger-head-v1\x00"
@@ -231,29 +230,18 @@ def _verify_signature(cert: Any, signer: Any, data: bytes, digest_name: str, lib
 
 
 def http_post(url: str, body: bytes, timeout: float, context: ssl.SSLContext | None = None) -> bytes:
-    """POST a TimeStampReq. No redirects, a size cap and a hard timeout. HTTP is fine: the token is signed."""
-    parts = urlsplit(url)
-    if parts.scheme not in ("http", "https") or not parts.hostname:
-        raise TimestampError("the TSA URL must be http or https")
-    cls = http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
-    kwargs: dict[str, Any] = {"timeout": timeout}
-    if parts.scheme == "https":
-        kwargs["context"] = context or ssl.create_default_context()
-    conn = cls(parts.hostname, parts.port or (443 if parts.scheme == "https" else 80), **kwargs)
+    """POST a TimeStampReq. No redirects, a size cap and one deadline for the whole exchange.
+
+    HTTP is fine here: the token is signed. ``timeout`` is the total time allowed after the connection
+    is made, not one wait; see :mod:`zts._http`.
+    """
     try:
-        conn.request("POST", parts.path or "/", body=body, headers={
-            "Content-Type": "application/timestamp-query", "Accept": "application/timestamp-reply"})
-        response = conn.getresponse()
-        if response.status != 200:
-            raise TimestampError(f"the TSA answered {response.status}")
-        data = response.read(MAX_RESPONSE_BYTES + 1)
-    except (OSError, http.client.HTTPException) as exc:
-        raise TimestampError(f"the TSA could not be reached: {type(exc).__name__}") from None
-    finally:
-        conn.close()
-    if len(data) > MAX_RESPONSE_BYTES:
-        raise TimestampError("the TSA response is too large")
-    return data
+        return bounded_post(
+            url, body, timeout, context, schemes=("http", "https"), max_bytes=MAX_RESPONSE_BYTES,
+            headers={"Content-Type": "application/timestamp-query", "Accept": "application/timestamp-reply"},
+            service="TSA", response_noun="TSA response")
+    except HttpFailure as exc:
+        raise TimestampError(str(exc)) from None
 
 
 class Rfc3161Anchor:
