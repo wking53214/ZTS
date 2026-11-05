@@ -89,3 +89,38 @@ jobs:
           ZTS_REQUIRE_CNS: "1"
           ZTS_REQUIRE_ENFORCER: "1"
         run: python -m pytest tests/ -q -rs
+
+  production-stack:
+    # Every real component at once: the Ed25519 verifier, the HTTPS status client, a real PostgreSQL
+    # server for the replay store, and an RFC 3161 anchor against OpenSSL's independent TSA. The
+    # REQUIRE flags make a missing piece a failure instead of a skip. ubuntu-latest ships the
+    # PostgreSQL 16 server binaries; the tests start and stop their own throwaway cluster.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install the production extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,cns,enforcer,trust,replay-postgres,tsa]"
+          openssl version
+          ls /usr/lib/postgresql/*/bin/initdb
+
+      - name: Run the whole suite against the real stack
+        env:
+          ZTS_REQUIRE_CNS: "1"
+          ZTS_REQUIRE_ENFORCER: "1"
+          ZTS_REQUIRE_POSTGRES: "1"
+          ZTS_REQUIRE_TSA: "1"
+          ZTS_REQUIRE_ENFORCER_011: "1"
+        run: python -m pytest tests/ -q -rs
+
