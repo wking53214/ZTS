@@ -49,10 +49,15 @@ class ReleaseMetrics:
         self._reasons: Counter[str] = Counter()
         self._total = 0
         self._observer_errors = 0
+        self._anchor_failures = 0
 
     def observer_failed(self) -> None:
         with self._lock:
             self._observer_errors += 1
+
+    def anchor_failed(self) -> None:
+        with self._lock:
+            self._anchor_failures += 1
 
     def record(self, outcome: str, reason: str) -> None:
         with self._lock:
@@ -75,6 +80,7 @@ class ReleaseMetrics:
                 "delivery_unknown": self._outcomes.get("delivery_unknown", 0),
                 "audit_incomplete": self._outcomes.get("delivered_audit_incomplete", 0),
                 "observer_errors": self._observer_errors,
+                "anchor_failures": self._anchor_failures,
             }
 
 
@@ -99,6 +105,7 @@ def audit_event(result: Any, *, policy_version: str = "") -> dict[str, Any]:
         "grant_state": auth.get("grant_state", ""),
         "delivery_verified": result.delivery_verified,
         "audit_durable": result.audit_durable,
+        "audit_anchored": result.audit_anchored,
         "attempts": result.attempts,
         "elapsed_ms": round(result.elapsed_ms, 3),
         "decided_at": auth.get("decided_at", ""),
@@ -191,50 +198,152 @@ def check_configuration(tower: Any) -> list[Check]:
     ]
     if gate is not None:
         checks += _probe_enforcer(gate)
+    checks += _probe_anchor(tower.ledger)
+    checks.append(Check("trust_root_governance", UNKNOWN,
+                        "who owns the trust root, how it is stored, rotated and distributed is an operator "
+                        "decision that no code can verify"))
     return checks
+
+
+def _probe_anchor(ledger: Any) -> list[Check]:
+    anchor = getattr(ledger, "_anchor", None)
+    if anchor is None:
+        return []
+    from .anchor_tsa import Rfc3161Anchor
+
+    if isinstance(anchor, Rfc3161Anchor):
+        info = anchor.describe()
+        return [
+            Check("anchor_kind", PASS, f"RFC 3161 time-stamp anchor with {info['pinned_certificates']} pinned "
+                                       "TSA certificate(s); tokens are re-verified on every read"),
+            Check("anchor_independence", UNKNOWN,
+                  "the TSA proves a head existed. It does not remember your ledger: keep the receipts file "
+                  "where the ledger's writer cannot rewrite it, or rollback goes unnoticed"),
+        ]
+    return [Check("anchor_independence", UNKNOWN,
+                  f"{type(anchor).__name__}: whether this anchor is out of the ledger writer's reach is a "
+                  "deployment fact")]
 
 
 def _probe_enforcer(gate: Any) -> list[Check]:
-    """Best-effort look at Enforcer's configuration. Enforcer exposes no accessor, so this reads
-    private attributes; if they are not there the answer is UNKNOWN, never PASS."""
-    checks: list[Check] = []
+    """Look at how Enforcer was configured. Enforcer exposes no accessor, so this reads private
+    attributes; if they are not there the answer is UNKNOWN, never PASS.
+
+    ZTS's own adapters (the Ed25519 verifier, the HTTPS status client, the PostgreSQL replay store)
+    can be inspected, so they can PASS for what this process verifies about them. Anything custom
+    stays UNKNOWN however it is named. Nothing here can say whether a trust root is *legitimate*.
+    """
     enforcer = getattr(gate, "_enforcer", None)
-    for attr, id_attr, name in (("_verifier", "verifier_id", "proof_verifier"),
-                                ("_revalidator", "revalidator_id", "status_source")):
-        ident = getattr(getattr(enforcer, attr, None), id_attr, None)
-        if not isinstance(ident, str):
-            checks.append(Check(name, UNKNOWN, "could not read the adapter's identifier"))
-        elif ident.startswith("reject-all"):
-            checks.append(Check(name, FAIL, f"{ident}: Enforcer's reject-everything default is still in place"))
-        elif ident.startswith("tests/") or ident.startswith("test-"):
-            checks.append(Check(name, FAIL, f"{ident}: this identifies itself as a test fixture"))
-        else:
-            checks.append(Check(
-                name, UNKNOWN,
-                f"{ident}: ZTS cannot verify what this adapter does. Review and exercise it; "
-                "this report does not vouch for it"))
-    checks.append(_probe_replay_store(getattr(enforcer, "_replay_store", None)))
+    checks = [
+        _probe_verifier(getattr(enforcer, "_verifier", None)),
+        _probe_status(getattr(enforcer, "_revalidator", None), getattr(enforcer, "_verifier", None)),
+    ]
+    checks += _probe_replay_store(getattr(enforcer, "_replay_store", None))
+    verifier_hook = getattr(gate, "identity_verifier", None)
+    checks.append(Check(
+        "identity_authentication", UNKNOWN,
+        "an identity verifier is configured; ZTS cannot verify what it does" if verifier_hook is not None
+        else "no identity verifier: the grant issuer is the only authentication of the subject"))
     return checks
 
 
-def _probe_replay_store(store: Any) -> Check:
+def _generic_adapter(adapter: Any, id_attr: str, name: str) -> Check | None:
+    ident = getattr(adapter, id_attr, None)
+    if not isinstance(ident, str):
+        return Check(name, UNKNOWN, "could not read the adapter's identifier")
+    if ident.startswith("reject-all"):
+        return Check(name, FAIL, f"{ident}: Enforcer's reject-everything default is still in place")
+    if ident.startswith("tests/") or ident.startswith("test-"):
+        return Check(name, FAIL, f"{ident}: this identifies itself as a test fixture")
+    return None
+
+
+def _usable_keys(trust: Any, role: str) -> int:
+    from datetime import datetime, timezone
+
+    root = trust.current() if hasattr(trust, "current") else trust
+    now = datetime.now(timezone.utc)
+    return sum(1 for k in root.keys.values() if k.role == role and k.usable_at(now))
+
+
+def _probe_verifier(verifier: Any) -> Check:
+    name = "proof_verifier"
+    found = _generic_adapter(verifier, "verifier_id", name)
+    if found is not None:
+        return found
+    from .trust import Ed25519GrantVerifier, TrustRootError
+
+    if isinstance(verifier, Ed25519GrantVerifier):
+        try:
+            usable = _usable_keys(verifier._trust, "grant")
+        except TrustRootError as exc:
+            return Check(name, FAIL, f"the trust root cannot be loaded: {exc}")
+        if usable == 0:
+            return Check(name, FAIL, "the trust root has no usable grant key: every proof will be refused")
+        return Check(name, PASS, f"ZTS Ed25519 verifier, one algorithm, {usable} usable grant key(s). "
+                                 "Whether the trust root itself is legitimate is not something this can check")
+    return Check(name, UNKNOWN, f"{getattr(verifier, 'verifier_id', '?')}: a custom verifier; ZTS cannot "
+                                "verify what it does. Review and exercise it")
+
+
+def _probe_status(revalidator: Any, verifier: Any) -> Check:
+    name = "status_source"
+    found = _generic_adapter(revalidator, "revalidator_id", name)
+    if found is not None:
+        return found
+    from .status import HttpStatusRevalidator
+    from .trust import TrustRootError
+
+    if isinstance(revalidator, HttpStatusRevalidator):
+        try:
+            usable = _usable_keys(revalidator._trust, "status")
+        except TrustRootError as exc:
+            return Check(name, FAIL, f"the trust root cannot be loaded: {exc}")
+        if usable == 0:
+            return Check(name, FAIL, "the trust root has no usable status key: every status answer will be refused")
+        return Check(name, PASS, f"HTTPS signed status API ({revalidator.revalidator_id}), live per release, no "
+                                 f"cache, challenge-bound, {usable} usable status key(s). Reachability is not tested here")
+    return Check(name, UNKNOWN, f"{getattr(revalidator, 'revalidator_id', '?')}: a custom status source; ZTS "
+                                "cannot verify what it does. Review and exercise it")
+
+
+def _probe_replay_store(store: Any) -> list[Check]:
     name = "replay_store"
     if store is None:
-        return Check(name, UNKNOWN, "could not read the replay store")
+        return [Check(name, UNKNOWN, "could not read the replay store")]
+    from .replay_postgres import PostgresReplayStore
+
+    if isinstance(store, PostgresReplayStore):
+        info = store.describe()
+        healthy = store.health()
+        checks = [Check(name, PASS if healthy else FAIL,
+                        "shared PostgreSQL store: reachable, with the two uniqueness constraints in place. "
+                        "Replication and failover durability are the operator's to confirm" if healthy
+                        else "the PostgreSQL replay store is unreachable or lacks its uniqueness constraints")]
+        mode = info.get("sslmode")
+        host = str(info.get("host", ""))
+        local = host.startswith("/") or host in ("localhost", "127.0.0.1", "::1")
+        if mode in ("verify-full", "verify-ca"):
+            checks.append(Check("replay_store_tls", PASS, f"sslmode={mode}"))
+        elif local:
+            checks.append(Check("replay_store_tls", UNKNOWN, f"sslmode={mode} on a local connection"))
+        else:
+            checks.append(Check("replay_store_tls", FAIL, f"sslmode={mode} to {host}: the replay database "
+                                                         "connection is not verified TLS"))
+        return checks
     connection = getattr(store, "_connection", None)
     if connection is not None:
         try:
             rows = connection.execute("PRAGMA database_list").fetchall()
             files = [row[2] for row in rows if row[1] == "main"]
         except Exception:
-            return Check(name, UNKNOWN, "could not inspect the SQLite replay store")
+            return [Check(name, UNKNOWN, "could not inspect the SQLite replay store")]
         if files and files[0]:
-            return Check(name, UNKNOWN, "file-backed SQLite: survives a restart on this host, "
-                                        "but is not shared across hosts. Whether that matches the "
-                                        "deployment is the operator's to confirm")
-        return Check(name, FAIL, "in-memory SQLite: every spent grant is forgotten at restart")
-    return Check(name, UNKNOWN, f"{type(store).__name__}: durability and cross-host consistency "
-                                "are the operator's to verify")
+            return [Check(name, UNKNOWN, "file-backed SQLite: survives a restart on this host, but is not shared "
+                                         "across hosts. Whether that matches the deployment is the operator's to confirm")]
+        return [Check(name, FAIL, "in-memory SQLite: every spent grant is forgotten at restart")]
+    return [Check(name, UNKNOWN, f"{type(store).__name__}: durability and cross-host consistency "
+                                 "are the operator's to verify")]
 
 
 def check_runtime(tower: Any) -> list[Check]:
@@ -259,6 +368,11 @@ def check_runtime(tower: Any) -> list[Check]:
             checks.append(Check("cns_importable", PASS, "CNS imports and is a supported release"))
         except Exception as exc:
             checks.append(Check("cns_importable", FAIL, str(exc)))
+    anchor = getattr(tower.ledger, "_anchor", None)
+    last_error = getattr(anchor, "last_error", None)
+    if anchor is not None and hasattr(anchor, "last_error"):
+        checks.append(_verdict(last_error is None, "anchor_service", "the last anchor publish succeeded",
+                               f"the last anchor publish failed: {last_error}"))
     checks.append(_verdict(not tower.closing, "accepting_work", "accepting releases", "the tower is closed or closing"))
     return checks
 
