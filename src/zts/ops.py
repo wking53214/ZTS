@@ -31,12 +31,23 @@ SECURITY_REASONS = frozenset({
     "GRANT_REPLAYED", "PROOF_INVALID", "SCOPE_MISMATCH", "GRANT_REVOKED", "GRANT_EXPIRED",
     "CNS_VERIFICATION_FAILED", "CNS_IDENTITY_UNTRUSTED", "ARTIFACT_CHANGED", "POLICY_CHANGED",
     "PRODUCTION_INVARIANT_VIOLATED", "AUTHORITY_CONTEXT_MISMATCH",
+    # An unauthenticated subject, a grant that claims too long a life or is dated in the future, and a
+    # verifier that returned something that is not claims are all things an attacker or a broken issuer does.
+    "IDENTITY_NOT_AUTHENTICATED", "GRANT_LIFETIME_TOO_LONG", "GRANT_NOT_YET_VALID", "CLAIMS_INVALID",
 })
 #: Failures of a dependency or of the audit trail: the system is degraded, not necessarily attacked.
 AVAILABILITY_REASONS = frozenset({
     "LEDGER_UNAVAILABLE", "ENFORCER_TIMEOUT", "PROOF_PROVIDER_TIMEOUT", "PROOF_PROVIDER_ERROR",
     "CNS_UNAVAILABLE", "ENFORCER_UNAVAILABLE", "REPLAY_STORE_ERROR", "VERIFIER_ERROR",
     "AUTHORITY_REVALIDATION_ERROR", "DELIVERY_UNCONFIRMED", "RELEASE_ACTION_FAILED",
+    # The status source answered, but not with a usable current answer. Treated as the source failing.
+    "AUTHORITY_STATUS_INVALID", "AUTHORITY_STATUS_STALE", "AUTHORITY_STATUS_UNKNOWN",
+    "ENFORCER_ERROR", "ENFORCER_INCOMPATIBLE", "CNS_CONTRACT_INCOMPATIBLE", "ANCHOR_BEHIND",
+})
+#: Expected outcomes and caller-side mistakes. They are counted, never alerted on by default.
+EXPECTED_REASONS = frozenset({
+    "PROOF_MISSING", "ENVELOPE_INVALID", "RELEASE_ID_MISSING", "RELEASE_SCOPE_MISSING",
+    "RELEASE_REQUEST_MISSING", "RELEASE_NOT_CONFIGURED", "RELEASE_CANCELLED", "SHUTTING_DOWN", "SIEVE_BREACH",
 })
 
 
@@ -77,6 +88,13 @@ class ReleaseMetrics:
                 "replays_detected": reasons.get("GRANT_REPLAYED", 0),
                 "security_denials": sum(n for r, n in reasons.items() if r in SECURITY_REASONS),
                 "availability_failures": sum(n for r, n in reasons.items() if r in AVAILABILITY_REASONS),
+                "expected_denials": sum(n for r, n in reasons.items() if r in EXPECTED_REASONS),
+                # A denial code that no bucket knows. Non-zero means a new code was added without deciding
+                # whether it is an alert; it is never silently dropped.
+                "unclassified_denials": sum(
+                    n for r, n in reasons.items()
+                    if r != "VERIFIED_ACTION_BOUND_GRANT" and r not in SECURITY_REASONS
+                    and r not in AVAILABILITY_REASONS and r not in EXPECTED_REASONS),
                 "delivery_unknown": self._outcomes.get("delivery_unknown", 0),
                 "audit_incomplete": self._outcomes.get("delivered_audit_incomplete", 0),
                 "observer_errors": self._observer_errors,
@@ -301,6 +319,14 @@ def _probe_status(revalidator: Any, verifier: Any) -> Check:
             return Check(name, FAIL, f"the trust root cannot be loaded: {exc}")
         if usable == 0:
             return Check(name, FAIL, "the trust root has no usable status key: every status answer will be refused")
+        tls = revalidator.describe()["tls"]
+        if tls == "unverified":
+            return Check(name, FAIL, f"{revalidator.revalidator_id}: the TLS context does not require a "
+                                     "verified certificate and host name")
+        if tls == "custom_transport":
+            return Check(name, UNKNOWN, f"{revalidator.revalidator_id}: a caller-supplied transport carries the "
+                                        "request; ZTS cannot see whether it verifies TLS. Answers are still "
+                                        "signature-checked and challenge-bound")
         return Check(name, PASS, f"HTTPS signed status API ({revalidator.revalidator_id}), live per release, no "
                                  f"cache, challenge-bound, {usable} usable status key(s). Reachability is not tested here")
     return Check(name, UNKNOWN, f"{getattr(revalidator, 'revalidator_id', '?')}: a custom status source; ZTS "
@@ -323,8 +349,12 @@ def _probe_replay_store(store: Any) -> list[Check]:
         mode = info.get("sslmode")
         host = str(info.get("host", ""))
         local = host.startswith("/") or host in ("localhost", "127.0.0.1", "::1")
-        if mode in ("verify-full", "verify-ca"):
+        if mode == "verify-full":
             checks.append(Check("replay_store_tls", PASS, f"sslmode={mode}"))
+        elif mode == "verify-ca":
+            checks.append(Check("replay_store_tls", UNKNOWN, "sslmode=verify-ca checks the certificate chain but not "
+                                                             "the host name: any server holding a certificate from "
+                                                             "that CA is accepted. Use verify-full"))
         elif local:
             checks.append(Check("replay_store_tls", UNKNOWN, f"sslmode={mode} on a local connection"))
         else:
@@ -346,6 +376,36 @@ def _probe_replay_store(store: Any) -> list[Check]:
                                  "are the operator's to verify")]
 
 
+def _runtime_adapters(gate: Any) -> list[Check]:
+    """Live state of ZTS's own adapters. A configuration check passes once; these run on every health call,
+    so a trust root that was emptied, rolled back or made unreadable, or a replay table that lost a
+    constraint, shows up as degraded instead of staying "ok" until the next release is refused."""
+    enforcer = getattr(gate, "_enforcer", None)
+    verifier = getattr(enforcer, "_verifier", None)
+    revalidator = getattr(enforcer, "_revalidator", None)
+    store = getattr(enforcer, "_replay_store", None)
+    out: list[Check] = []
+    from .replay_postgres import PostgresReplayStore
+    from .status import HttpStatusRevalidator
+    from .trust import Ed25519GrantVerifier, TrustRootError
+
+    for adapter, cls, role, name in ((verifier, Ed25519GrantVerifier, "grant", "trust_root_grant_keys"),
+                                     (revalidator, HttpStatusRevalidator, "status", "trust_root_status_keys")):
+        if isinstance(adapter, cls):
+            try:
+                usable = _usable_keys(adapter._trust, role)
+            except TrustRootError as exc:
+                out.append(Check(name, FAIL, f"the trust root cannot be loaded: {exc}"))
+                continue
+            out.append(_verdict(usable > 0, name, f"{usable} usable {role} key(s)",
+                                f"no usable {role} key: every proof or status answer will be refused"))
+    if isinstance(store, PostgresReplayStore):
+        out.append(_verdict(store.health(), "replay_store_live",
+                            "the replay database answers and both uniqueness constraints are in place",
+                            "the replay database is unreachable or a uniqueness constraint is missing"))
+    return out
+
+
 def check_runtime(tower: Any) -> list[Check]:
     """Live checks: is the thing working right now."""
     checks: list[Check] = []
@@ -356,6 +416,7 @@ def check_runtime(tower: Any) -> list[Check]:
         checks.append(_verdict(ok, "ledger_anchor_match", "the chain matches the anchor", f"anchor check failed: {reason}"))
     gate = tower.release_gate
     if gate is not None:
+        checks += _runtime_adapters(gate)
         from .release import _load_enforcer  # lazy: Enforcer is optional
 
         try:
@@ -380,6 +441,7 @@ def check_runtime(tower: Any) -> list[Check]:
 __all__ = [
     "AVAILABILITY_REASONS",
     "Check",
+    "EXPECTED_REASONS",
     "FAIL",
     "LOGGER",
     "PASS",

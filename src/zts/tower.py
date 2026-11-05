@@ -122,6 +122,9 @@ class LogicCornerstone:
 _RELEASE_CONTROLS = frozenset({
     "tap", "release_gate", "release_sink", "require_enforcer",
     "delivery_confirmer", "confirm_timeout", "ledger", "profile", "production", "metrics",
+    # The content sieve, its time budget, the logic cornerstone and the release signature key decide what is
+    # released and how it is signed; the seal flag itself must not be clearable by an ordinary assignment.
+    "zts", "kg", "lc", "_key", "_key_id", "_sealed",
 })
 
 
