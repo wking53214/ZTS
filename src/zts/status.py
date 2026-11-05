@@ -31,7 +31,6 @@ signature is what authenticates the answer.
 
 from __future__ import annotations
 
-import http.client
 import json
 import secrets
 import ssl
@@ -40,6 +39,7 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlsplit
 
+from ._http import HttpFailure, bounded_post
 from .trust import (
     ROLE_STATUS,
     FileTrustRoot,
@@ -68,27 +68,18 @@ class StatusUnavailable(RuntimeError):
 
 
 def https_post(url: str, body: bytes, timeout: float, context: ssl.SSLContext | None = None) -> bytes:
-    """POST over verified TLS. No redirects, no plain HTTP, a size cap and a hard timeout."""
-    parts = urlsplit(url)
-    if parts.scheme != "https" or not parts.hostname:
-        raise StatusUnavailable("the status URL must be https")
-    conn = http.client.HTTPSConnection(
-        parts.hostname, parts.port or 443, timeout=timeout,
-        context=context or ssl.create_default_context())
+    """POST over verified TLS. No redirects, no plain HTTP, a size cap and one deadline for the whole exchange.
+
+    ``timeout`` is the total time allowed after the connection is made, not one wait: a server that
+    answers a byte at a time is cut off when it is up. See :mod:`zts._http` for what that does not cover.
+    """
     try:
-        conn.request("POST", parts.path or "/", body=body, headers={
-            "Content-Type": "application/json", "Accept": "application/octet-stream"})
-        response = conn.getresponse()
-        if response.status != 200:  # includes every 3xx: a redirect is never followed
-            raise StatusUnavailable(f"the status service answered {response.status}")
-        data = response.read(MAX_RESPONSE_BYTES + 1)
-    except (OSError, http.client.HTTPException) as exc:
-        raise StatusUnavailable(f"the status service could not be reached: {type(exc).__name__}") from None
-    finally:
-        conn.close()
-    if len(data) > MAX_RESPONSE_BYTES:
-        raise StatusUnavailable("the status response is too large")
-    return data
+        return bounded_post(
+            url, body, timeout, context, schemes=("https",), max_bytes=MAX_RESPONSE_BYTES,
+            headers={"Content-Type": "application/json", "Accept": "application/octet-stream"},
+            service="status service", response_noun="status response")
+    except HttpFailure as exc:
+        raise StatusUnavailable(str(exc)) from None
 
 
 class HttpStatusRevalidator:
