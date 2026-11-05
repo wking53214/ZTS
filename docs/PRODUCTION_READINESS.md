@@ -66,6 +66,28 @@ Authorized, additive and backward compatible; merged to Enforcer `main` as PR #7
 
 ZTS pins Enforcer 0.1.1 and is still tested against 0.1.0 (accepted as `0.1.x`). **CNS needs no change**; its consumer table should list `cns.gate.subject_digest` for ZTS.
 
+## Phase 2 adversarial audit: what it found and what was done
+
+An independent pass at main `740b864` (probes executed against real PostgreSQL, OpenSSL's TSA, a real TLS
+service and a second Ed25519 implementation). Controls that held: forged, malleated and bit-flipped grants
+refused (including one signed by libsodium and accepted when genuine); replay races across processes; secret
+keys absent from every output scanned. Findings, and their disposition:
+
+| Finding | Disposition |
+|---|---|
+| Ledger entries after the last timestamp could be deleted undetected during a TSA outage; the outcome still read `delivered` | **Fixed**: the unstamped tail is bounded and past the bound new releases are refused (`ANCHOR_BEHIND`); recovery is automatic |
+| An older trust root could be put back, un-revoking a key | **Fixed** with an optional `serial` and a serial store; **left to the operator**: a pinned digest, or a writer of the file authoring a newer one |
+| A revocation after the status answer and before the callback is missed; the documented bound was wrong | **Accepted limitation, now stated accurately**: bounded by the gate timeout, measured at 0 to 2.5 s in the probe, never instant |
+| Replay constraints were checked at startup only; `health()` stayed `ok` after they were dropped | **Fixed**: checked on every consume and in `health()` |
+| `prune()` trusted the pruning host's clock | **Fixed**: the database's clock, with a floor on the grace period |
+| Many denial codes were in no alert bucket (including `IDENTITY_NOT_AUTHENTICATED`) | **Fixed**; a test fails if a code has no bucket, and unknown codes are counted |
+| Readiness said PASS for a status client with TLS verification off, for `verify-ca`, and for an anchor never reached | **Fixed** (FAIL, UNKNOWN, UNKNOWN) |
+| The tower's seal left the content sieve, time budget, signature key and the seal flag assignable | **Fixed**; reaching inside a sealed object is still possible in-process (a tested known limit) |
+| Receipts had no export path | **Added**: `on_receipt`; where it writes is the operator's |
+| Status and TSA timeouts are per operation, not a total deadline | **Open**: fails closed, but abandoned threads can accumulate against a slow endpoint |
+| Trust-root file: duplicate JSON keys resolve to the last, the parent directory and symlinks are not checked | **Open**, low |
+| Calling the delivery callback directly bypasses everything | **Not solvable in a library**: process isolation |
+
 ## What cannot be established from source
 
 Whether any authority is trustworthy; whether the sink's receiving side is independent of the sink;

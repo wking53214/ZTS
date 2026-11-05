@@ -326,8 +326,16 @@ The decisions behind these, and what was chosen, are in [PRODUCTION_READINESS.md
 
 1. **The trust root's legitimacy.** ZTS verifies against keys you pinned. Who owns them, how they are stored,
    rotated and revoked, and who may edit the file are operator decisions. There is no reference issuer.
-2. **A revocation after Enforcer's status check and before the callback's effect is missed.** Bounded by
-   Enforcer's freshness limit; not eliminated.
+2. **A revocation after the issuer's status answer and before the callback starts is missed.** Measured
+   (Phase 2 audit): an issuer that revokes the instant it answers CURRENT still sees the release delivered, and
+   the next release refused. The window runs from the signed answer to the start of the delivery callback. It
+   holds the replay-store round trip, Enforcer's `on_allow`, the second CNS and identity check, and nothing
+   else, so it is as short as those are fast: 0.0 s with no database latency, 2.5 s with 2.5 s of it. It is
+   bounded by the gate's `timeout` (a release not started by then is abandoned and denied), not by Enforcer's
+   30 s freshness limit, which is checked once, before the grant is consumed. `timeout=None` leaves it
+   unbounded, which `production=True` refuses. It is not eliminated, and ZTS does not claim instant
+   revocation. A second status request just before the callback would narrow it to one round trip, never to
+   zero; that was considered and not done.
 3. **Replay durability stops where your database's does.** Asynchronous failover can forget a spent grant.
    A custom replay store is reported UNKNOWN.
 4. **Anchor independence is a deployment fact.** A TSA does not remember your ledger; a consistent rollback of

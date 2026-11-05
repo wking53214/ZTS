@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Phase 2 audit hardening (fourth pass)
+
+Added:
+- `Rfc3161Anchor(max_unanchored_entries=500, max_unanchored_age=300.0, on_receipt=)`, `.behind()`, `.catch_up()`,
+  `.receipts()`; `ValLedger.anchor_behind()`. New release reason `ANCHOR_BEHIND` (outcome `not_attempted`): checked
+  before the tower writes anything, so a hold cannot grow the gap. Lifts by itself when the TSA stamps again.
+- Trust root: optional `serial`; `FileSerialStore`, `PostgresSerialStore`; `FileTrustRoot(serial_store=,
+  recheck_interval=)` and `.describe()`; readiness `trust_root_rollback`.
+- `HttpStatusRevalidator.describe()` (TLS posture). `health()` now covers trust-root keys, the replay table and the
+  anchor backlog. Metrics `expected_denials`, `unclassified_denials`; `ops.EXPECTED_REASONS`.
+
+Changed:
+- Seven more tower attributes are sealed after construction: `zts`, `kg`, `lc`, `_key`, `_key_id`, `_sealed`.
+- `PostgresReplayStore` refuses a table without both uniqueness constraints at construction and on every `consume`;
+  `prune()` uses the database clock and refuses a grace period under 30 s (`MIN_GRACE`).
+- Readiness: a status client with an unverified TLS context FAILs; one with a custom transport, `sslmode=verify-ca`,
+  and an anchor the TSA has not yet answered are UNKNOWN (they were PASS). Anchors without a bound FAIL.
+- Alert buckets now cover every denial code (identity, lifetime, status-stale and others).
+- Documentation: the revocation window is described as bounded by the gate timeout (it said Enforcer's freshness
+  limit, which does not bound it).
+
+Existing tests changed because they asserted exactly the behavior above:
+- `test_production_assembly.py::test_a_tower_built_from_the_real_components_passes_production_validation`:
+  `anchor_service` is UNKNOWN on a fresh tower, not PASS.
+- `test_production_assembly.py::test_production_refuses_a_replay_table_that_has_lost_a_uniqueness_constraint`:
+  the refusal now comes from the store (`ReplayStoreError`) when it is built.
+- `test_release_residual.py` docstring only: the revocation window's bound.
+
+
 ### Real trust, status, replay and anchor components (third pass)
 
 Added (optional extras; `zts` itself still has no runtime dependency):
