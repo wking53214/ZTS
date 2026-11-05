@@ -1,4 +1,4 @@
-# Production readiness: what is done, what is blocked, and what needs a decision
+# Production readiness: what is done, what was decided, and what only people can establish
 
 This document is the honest state of the release boundary. It separates four things
 that are easy to blur:
@@ -22,121 +22,49 @@ review could observe.
 | `run()` off the event loop; cooperative cancellation; bounded grant provider and Enforcer call; late-arrival guard; graceful shutdown | `zts.tower`, `zts.release` | `tests/test_release_async.py` |
 | Release controls sealed after construction; decision-time production invariant | `zts.tower` | `tests/test_release_containment.py` |
 | Security metrics, structured audit events, startup validation (`production=True`), health | `zts.ops` | `tests/test_ops.py` |
+| Ed25519 grant verifier; rotatable, revocable, file-based trust root | `zts.trust` | `tests/test_trust_ed25519.py` (against an independent issuer), `tests/test_wire_vectors.py` |
+| Online signed status revalidation over verified HTTPS, challenge-bound, no cache | `zts.status` | `tests/test_status_http.py` (a real TLS service) |
+| Shared PostgreSQL replay store; safe pruning; refuses a table that lost a constraint | `zts.replay_postgres` | `tests/test_replay_postgres.py` (a real PostgreSQL server; threads, processes, two hosts) |
+| RFC 3161 ledger anchor; lazy publishing; every token re-verified | `zts.anchor_tsa` | `tests/test_anchor_tsa.py` (tokens issued by OpenSSL) |
+| Optional identity-authentication hook, checked twice, fail closed | `EnforcerReleaseGate(identity_verifier=)` | `tests/test_identity_hook.py` |
+| The whole stack assembled and attacked | all of the above | `tests/test_production_assembly.py` |
 
-Each guard above was mutation-tested: the code was deliberately broken and the suite had to fail.
+Each guard above was mutation-tested: the code was deliberately broken and the suite had to fail. Three
+survivors were equivalent mutants (redundant checks); every real gap that turned up got a test.
 
-## What is NOT a production capability, and why
+## Decisions taken, and what each still leaves open
 
-| Gap | State | Why it is not closed |
-|---|---|---|
-| Proof verifier for real grants | **Absent.** Only the HMAC fixture in `tests/release_kit.py` exists. | Needs a trust-root decision (A below). Enforcer's default rejects every proof, so an unconfigured system denies everything. |
-| Authorization status / revocation source | **Absent.** Only a fixture. | Needs an authority to exist (B below). Enforcer's default rejects everything. |
-| Replay protection across hosts | **Absent.** | Needs the deployment topology (C below). |
-| External ledger anchor | **Mechanism exists, independence unknown.** | A file anchor is only independent if mounted where the ledger's writer cannot rewrite it (D below). |
-| Authenticated caller identity | **Absent by design.** ZTS binds an identity; it does not authenticate one. | Needs an authenticator to exist (E below). |
+Each of these was a stop point: a choice about who owns a key, an authority or infrastructure that the
+repositories did not define. They were put to the owner with options and a recommendation, and decided:
 
-## Decisions required (stop points)
+| Decision | Chosen | Implemented | What it still leaves to people |
+|---|---|---|---|
+| A. Proof verification | Ed25519, keys pinned in a trust-root file | `zts.trust` | Who owns the trust root and issues grants; how the file is stored, rotated and edited; the issuer service itself |
+| B. Revalidation | Online signed status API on the issuer | `zts.status` | Running that service; its availability and its own security |
+| C. Replay topology | Several hosts, shared PostgreSQL | `zts.replay_postgres` | The database, its TLS, replication and failover durability, backups, who may delete rows |
+| D. Ledger anchor | RFC 3161 timestamp authority | `zts.anchor_tsa` | Which TSA and its certificate; where receipts are kept so a rollback of ledger and receipts is visible; interop with a public TSA is untested |
+| E. Identity | Issuer authenticates the subject, plus an optional hook | `identity_verifier` | An authenticator, if you want ZTS-side checks; otherwise the issuer is the only authentication |
+| F. Compatibility | Accepted | See CHANGELOG | |
 
-Each of these was reached in the campaign and **not** decided, because deciding it means choosing
-who owns a key, an authority, or an infrastructure that the repositories do not define. The
-stack's other components say the same thing about themselves: `Conservation_Kernel` "checks,
-does not issue" authorizations; the `sentinel_os` action-authorization spec says "no production
-provider currently implements these checks" and that issuer and reviewer-authority policy is
-unresolved; `Governance_Gateway` lists "issuing, registering or expiring authority" as not its
-own. Nothing in the stack issues Enforcer grants.
+Nothing here is deployment-verified. Every component was tested against an independent implementation
+(a separate encoder for the issuer and status service, a real PostgreSQL server, OpenSSL's RFC 3161 TSA),
+and each of those is a fixture, not evidence about a real issuer, authority or TSA.
 
-### A. Proof verification and the trust root (critical)
+## Changes made to a dependency (Enforcer 0.1.1, merged and pinned)
 
-**Established from source.** Enforcer's seam is `ProofVerifier.verify_and_decode(bytes) -> GrantClaims`.
-The stack's existing convention for signed evidence is Ed25519 with public keys pinned by the
-caller, keyed by id, unknown keys rejected, via the `cryptography` package (TIE `herald_intake`,
-HERALD export version 3). `sentinel_os` uses HMAC with service-level keys for attestation, which
-is symmetric.
+Authorized, additive and backward compatible; merged to Enforcer `main` as PR #7 (commit `b2ee452`), which ZTS now pins:
 
-**Not established.** Who issues grants. Who owns the trust root and where it is stored. How keys
-rotate and how a compromised key is revoked. How the trust root is distributed and updated. The
-proof wire format. Whether adding `cryptography` to ZTS (which has no runtime dependencies today)
-is acceptable.
+* `execute(..., on_allow=)` hands the caller the ALLOW decision before the callback, so a release that aborts
+  after the grant is spent keeps its decision record. ZTS uses it when present.
+* `Enforcer.describe()` and `SQLiteReplayStore.describe()`: public accessors for verifier id, revalidator
+  id, limits and replay-store durability. ZTS's checks still read private attributes today and fall back
+  safely; moving them to `describe()` is a follow-up now that 0.1.1 is merged and pinned.
+* Replay retention: the store records each grant's expiry (databases from 0.1.0 are upgraded in place) and
+  `prune()` removes only records for grants that expired longer ago than a grace period, which is safe
+  because an expired grant is refused before the store is consulted. Rows with no recorded expiry are never
+  pruned.
 
-| Option | What it is | Consequences |
-|---|---|---|
-| **A1 (recommended)** | ZTS ships an Ed25519 verifier adapter for Enforcer's seam. It reads an operator-supplied trust-root file of `{key id: public key, valid_from, valid_until, status}`; rejects unknown issuers, unknown or expired or revoked keys, any algorithm other than Ed25519, and malformed proofs. A new optional extra pulls in `cryptography`. | Follows the stack's existing pattern. Needs from you: who owns the trust root and how it is distributed and rotated, approval of the grant wire format, and an issuer (a separate service you own; it is not, and must not be, part of ZTS or Enforcer). |
-| A2 | The verifier lives in the Enforcer repository (or a new one) and ZTS only configures it. | Keeps ZTS free of cryptography. Requires changing a dependency repository, which this campaign is not authorized to do. |
-| A3 | A stdlib HMAC verifier, like `sentinel_os` attestation. | **Not recommended.** The verifier would hold the key that mints grants, so the verifying side can issue authority, which Enforcer's design forbids. |
-
-### B. Authorization revalidation and revocation (critical)
-
-**Established.** Enforcer requires an `AuthorizationRevalidator` that returns an authenticated
-`CURRENT` status bound to the envelope digest and policy version, no older than 30 seconds,
-and denies on anything else or on any error. **Not established:** where current status comes from.
-
-| Option | Consequences |
-|---|---|
-| **B1** Signed status list, pulled by an adapter with a maximum staleness inside Enforcer's 30 s bound | Works offline from the issuer; needs a signer (the A question again) and a freshness distribution channel. |
-| **B2 (recommended if the issuer is a service)** An authenticated online status API on the issuer | Simple semantics; the network failure behavior is already fail-closed (Enforcer denies on error, and ZTS bounds the call with a timeout). Needs that service. |
-| B3 Use the `Conservation_Kernel` registry | It checks registered authorization events but "does not issue them" and is a library with an in-memory registry. Mixes a transformation-conservation component into authorization; not recommended. |
-
-### C. Replay protection topology (critical)
-
-**Established.** Enforcer's SQLite store is atomic per host (`BEGIN IMMEDIATE`, unique
-constraints) and survives restart when file-backed; three connections racing on one file released
-exactly once (`test_release_residual.py`). `production=True` refuses an in-memory store. It has
-no retention or pruning, and it is not shared across hosts. **Not established:** single-host or
-multi-host.
-
-| Option | Consequences |
-|---|---|
-| **C1** Single host, file-backed SQLite on local disk | Works today. Backup and recovery are yours. Growth is unbounded until Enforcer gains retention (see "Proposed dependency changes"). |
-| **C2 (required if more than one host releases)** A shared transactional store implementing Enforcer's `ReplayStore.consume` with uniqueness constraints | ZTS or the deployment can host the adapter. Needs a database choice; `sentinel_os` already runs PostgreSQL, which is a hint, not a decision. |
-| C3 Route all releases for a scope to one host | Cheap, but a failover is a replay window. |
-
-### D. External ledger anchor (critical for tamper evidence)
-
-**Established.** `FileLedgerAnchor` publishes and verifies; truncation, rollback and tail
-replacement are detected when the anchor survives. **Not established:** where an independent
-anchor lives. A file on the same volume and account as the ledger anchors nothing.
-
-| Option | Consequences |
-|---|---|
-| **D1 (recommended minimum)** Mount the anchor file on an append-only / WORM volume, or an account the ledger's writer cannot modify | No new code. Independence is entirely an operations fact that this repository cannot verify. |
-| D2 A remote append-only service | Needs the service and a protocol. |
-| D3 A transparency log or RFC 3161 timestamp authority | Strongest external assurance; adds an external trust decision. |
-
-### E. Caller identity authentication
-
-**Established.** CNS `IdentityContext` carries `verified`, `signature` and `trust_level`, and CNS
-is a neutral contract layer that does not evaluate them. ZTS binds the artifact to the identity's
-CNS digest. It does not authenticate the identity, and no component in the stack does.
-
-| Option | Consequences |
-|---|---|
-| **E1 (recommended)** The grant issuer authenticates the subject before issuing; the grant, bound to the subject digest, is the only authentication ZTS relies on | No ZTS change. A caller who holds a valid grant for subject X can present X's identity: the grant is a bearer credential bound to one release. The issuer must keep grants short-lived and single-use (Enforcer enforces both). |
-| E2 An optional `identity_verifier` hook in ZTS, run before the gate and failing closed | Small interface, but with no authenticator to plug in it earns no credit. |
-| E3 Verify `IdentityContext.signature` in ZTS | The signing scheme and keys are undefined. Would put identity logic in ZTS. |
-
-### F. Compatibility changes made in this campaign (for your approval)
-
-All are in unreleased work, but they change values and behavior an adopter of the earlier commit could rely on:
-
-1. `TowerResult.release_outcome` values were renamed and split (see `ReleaseState`): `released`
-   became `delivered` / `delivered_unverified` / `delivered_audit_incomplete`; `held` became
-   `not_attempted` / `failed_before_delivery`; `unconfirmed` became `delivery_unknown`;
-   `released_unrecorded` became `delivered_audit_incomplete`. Legacy releases are `released_legacy`.
-2. A tower's release controls (`tap`, `release_gate`, `release_sink`, `ledger`, `profile`, ...) are
-   read-only after construction. `tower.ledger = ...` now raises.
-3. `enforce()` and `run()` raise `TowerClosedError` after `close()`.
-4. An in-memory ledger can no longer produce `delivered`; the best it can say is
-   `delivered_audit_incomplete`.
-
-## Proposed changes to dependencies (not made)
-
-* **Enforcer**: replay-record retention and pruning that cannot make a still-valid grant reusable;
-  return the decision record when the guarded callback aborts after an allow (today ZTS gets none);
-  public accessors for the configured verifier and status-source ids, which the startup check now
-  reads from private attributes and reports UNKNOWN when it cannot.
-* **CNS**: none required. ZTS uses only `__version__`, `gate.subject_digest` and `IdentityContext`.
-  CNS's consumer table (`cns_composition/consumers.py`, `REQUIRED["ZTS"]`) should list
-  `cns.gate.subject_digest`; that was noted in an earlier PR and is a CNS-side change.
+ZTS pins Enforcer 0.1.1 and is still tested against 0.1.0 (accepted as `0.1.x`). **CNS needs no change**; its consumer table should list `cns.gate.subject_digest` for ZTS.
 
 ## What cannot be established from source
 

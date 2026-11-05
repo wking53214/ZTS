@@ -711,6 +711,14 @@ class DeterministicIntegrityTower:
         except Exception:
             recorded = False
         durable = recorded and self.ledger.durable
+        anchored = False
+        if recorded and self.ledger.anchored:
+            # The delivery has happened; a failing anchor cannot undo it, so it is reported, not raised.
+            try:
+                anchored = self.ledger.flush_anchor()
+            except Exception:
+                self.metrics.anchor_failed()
+        evidence["anchored"] = anchored
 
         if not delivered:
             if outcome.released or outcome.action_started:
@@ -752,6 +760,7 @@ class DeterministicIntegrityTower:
             release_outcome=label,
             delivery_verified=verified,
             audit_durable=durable,
+            audit_anchored=anchored,
             reason_code=reason,
             release_id=outcome.release_id,
             authorization=evidence,

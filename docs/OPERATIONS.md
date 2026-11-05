@@ -8,16 +8,20 @@ in a real deployment.
 
 ## 1. Topology this code supports
 
-One process, or several processes on **one host**, sharing:
+Several release hosts, each with its own tower, ledger file, anchor receipts and delivery sink, sharing:
 
-* one replay database file (Enforcer's `SQLiteReplayStore`; atomic across connections),
-* one ledger file (`FileLedgerStore`; appends are serialized across processes with `flock`),
-* one anchor file (`FileLedgerAnchor`).
+* **one PostgreSQL database** for replay protection (`PostgresReplayStore`); this is what makes a grant
+  releasable once across all hosts;
+* **one issuer** that signs grants and answers status queries, and one **trust-root file** each host reads;
+* optionally one **timestamp authority** for the ledger anchor.
 
-Not supported: several hosts. `flock` is advisory and unreliable on many network filesystems, and
-Enforcer's SQLite store does not coordinate hosts. Running two hosts against the same replay data
-leaves a window where one grant releases twice. Do not do it until a shared replay store exists
-(decision C).
+A single host may use Enforcer's file-backed SQLite store instead of PostgreSQL. Ledger files are per host
+(`flock` is advisory and unreliable on many network filesystems, so do not share one ledger file across hosts).
+Each host's chain stands alone; the release id in every entry ties them together.
+
+What this does **not** cover, because it is the database's and the network's: PostgreSQL replication and
+failover (an asynchronously replicated standby that is promoted can forget a spent grant; use synchronous
+replication or accept that window), TLS to the database (`sslmode=verify-full`), and who may delete rows.
 
 ## 2. Configuration
 
@@ -59,7 +63,15 @@ Call `tower.readiness()` for the full list (PASS / FAIL / UNKNOWN with a reason)
   the key, and rotating it makes older payload fingerprints unmatchable (README, "Open items").
   The release signature key can be replaced by restarting with a new key; signatures made under
   the old key stop verifying, so keep the old key available to whoever verifies old signatures.
-* Trust-root rotation and update: **blocked** on decision A. There is no trust root yet.
+* **Trust-root rotation and revocation** are file edits that take effect on the next verification, with no
+  restart (see [WIRE_FORMATS.md](WIRE_FORMATS.md)). To rotate: add the new key, switch the issuer to it, let old
+  grants expire, then mark the old key `revoked`. To revoke after compromise: set `status` to `revoked`; every
+  grant under that key fails from the next check. Protect the file: mode 644 or stricter, and restrict who can
+  write it, because whoever can edit it decides who may release. A broken edit refuses everything until fixed.
+  Optionally pin its SHA-256 out of band (`FileTrustRoot(..., expected_sha256=)`).
+* **TSA certificate rotation:** the pinned certificate is the TSA's signing certificate itself. When the TSA
+  rotates, pin the new one **in addition**, keep the old one until its receipts are no longer needed, and
+  expect old receipts to fail verification if you remove it.
 
 ## 4. Monitoring
 
@@ -79,6 +91,8 @@ release (tested).
 | `availability_failures` rising | Enforcer, CNS, the grant provider, the status source or the ledger is failing | Section 7, outage |
 | `delivery_unknown` > 0 | A delivery began and could not be confirmed | Section 7, unknown delivery. Never auto-retry |
 | `audit_incomplete` > 0 | A delivery happened without a durable final record | Section 7, audit gap |
+| `anchor_failures` > 0, or `health()` lists `anchor_service` | The timestamp authority could not stamp a head; tamper evidence is behind | Section 7, anchor |
+| `on_reject` reasons `unknown_kid`, `revoked_key`, `bad_signature`, `unsupported_alg` | Someone presented a grant ZTS refuses; the reason says why | Treat `bad_signature` and `unsupported_alg` as attack signatures |
 | `health()["status"] != "ok"` | The ledger chain or its anchor no longer verifies, or a dependency cannot be imported | Section 7, ledger integrity |
 
 ## 5. Normal operation and shutdown
@@ -107,8 +121,14 @@ means "the result was not returned", **not** "nothing happened". Read the ledger
 * **Restoring** the replay database from an old backup re-opens every grant spent since. Treat a
   restore as a security event; wait out the grant lifetime (Enforcer's default maximum is 5
   minutes) before accepting releases, or restore from a backup newer than that.
-* **Retention.** Neither the ledger nor Enforcer's replay table is ever pruned by ZTS. Archive by
-  copying; do not truncate a live ledger or its anchor. Enforcer has no safe replay pruning yet.
+* **Receipts.** Copy the RFC 3161 receipts file somewhere the ledger's writer cannot reach. Without that, an
+  attacker who restores an older ledger *and* the matching older receipts is invisible. With an off-box
+  copy, the newest receipt proves how far the ledger had got.
+* **Retention.** ZTS never prunes the ledger or its anchor; archive by copying, and do not truncate a live
+  ledger. The PostgreSQL replay table can be pruned: `PostgresReplayStore.prune()` deletes only rows whose
+  grant expired longer ago than a grace period (which is safe, because an expired grant is refused before the
+  store is consulted). It needs Enforcer 0.1.1 to record each grant's expiry; rows without one are never
+  pruned. Run it with a database role that may `DELETE`; give the release hosts `INSERT`/`SELECT` only.
 
 ## 7. Incident response
 
@@ -134,7 +154,14 @@ That is the intended behavior: there is no fallback path. Restoring service rest
 spent grants stay spent. Do not set `capstone=AUTO` to "get unstuck". It is refused by
 `production=True`, and if you do remove that, it performs no authorization at all.
 
-**Key compromise.** Issuer key: blocked on decision A (no trust root exists to revoke from).
+**Anchor failure.** Deliveries continue and `audit_anchored` is False until stamping works again; the next
+release's flush anchors everything written so far, so a short outage leaves no permanent gap. A long outage
+means the unanchored tail is only as trustworthy as the ledger file itself. Check the TSA, its certificate,
+and the clock; do not delete receipts.
+
+**Key compromise.** Issuer key: mark it `revoked` in the trust root (every grant under it fails from the next
+check), issue a new key, and treat releases made under the old key since the suspected compromise as
+unverified; the ledger lists them by the verifier id, which names the trust root that decided.
 Release signature key: replace and restart; old signatures are no longer trustworthy. Ledger
 key: payload fingerprints become matchable to guessed values; rotation is not supported, so
 plan a new ledger and archive the old.

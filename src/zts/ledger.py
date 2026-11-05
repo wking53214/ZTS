@@ -227,6 +227,19 @@ class ValLedger:
             return False, "head mismatch: chain truncated or replaced"
         return True, "chain intact"
 
+    def flush_anchor(self) -> bool:
+        """Make the anchor publish the newest head now, if it publishes lazily.
+
+        True means the anchor holds the head; an eager anchor already does. Raises whatever the
+        anchor raises, so a caller that must see a failure can. False means there is no anchor.
+        """
+        if self._anchor is None:
+            return False
+        flush = getattr(self._anchor, "flush", None)
+        if callable(flush):
+            flush()
+        return True
+
     def verify_anchored(self) -> tuple[bool, str]:
         """Walk the chain, then compare it with the head the anchor retained.
 

@@ -277,6 +277,7 @@ def build(
     verifier: HmacVerifier | None = None,
     confirmer: Any = "default",
     gate_timeout: float | None = None,
+    identity_verifier: Callable[[Any], bool] | None = None,
     **tower_options: Any,
 ) -> Stack:
     clock = clock or Clock()
@@ -298,7 +299,8 @@ def build(
         governor=KineticGovernor(ceiling_seconds=0.001),
         hmac_key=b"k" * 32,
         persist_ledger_key=False,
-        release_gate=EnforcerReleaseGate(gate_enforcer, policy_version=policy, timeout=gate_timeout),
+        release_gate=EnforcerReleaseGate(gate_enforcer, policy_version=policy, timeout=gate_timeout,
+                                      identity_verifier=identity_verifier),
         require_enforcer=True,
         release_sink=sink or recorder,
         delivery_confirmer=default_confirmer if confirmer == "default" else confirmer,

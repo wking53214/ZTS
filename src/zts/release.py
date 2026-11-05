@@ -36,6 +36,7 @@ problem, and no failure path falls back to another way of releasing.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import re
 import threading
@@ -88,6 +89,7 @@ class ReleaseReason:
     PROOF_PROVIDER_TIMEOUT = "PROOF_PROVIDER_TIMEOUT"
     POLICY_CHANGED = "POLICY_CHANGED"
     INVARIANT_VIOLATED = "PRODUCTION_INVARIANT_VIOLATED"
+    IDENTITY_NOT_AUTHENTICATED = "IDENTITY_NOT_AUTHENTICATED"
     #: What Enforcer reports when it allows.
     ALLOWED = "VERIFIED_ACTION_BOUND_GRANT"
 
@@ -335,7 +337,16 @@ class EnforcerReleaseGate:
 
     ``policy_version`` is the policy version this deployment releases under. A
     grant issued under another version is refused by Enforcer.
+
+    ``timeout`` and ``identity_verifier`` are fixed once the gate is built, for the
+    same reason the tower's release controls are: an ordinary assignment must not be
+    able to remove a bound or a check from a running gate.
     """
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in ("timeout", "identity_verifier") and self.__dict__.get("_sealed"):
+            raise AttributeError(f"{name} is fixed after construction; build a new gate")
+        object.__setattr__(self, name, value)
 
     def __init__(
         self,
@@ -344,6 +355,7 @@ class EnforcerReleaseGate:
         policy_version: str,
         dock: CNSDock | None = None,
         timeout: float | None = None,
+        identity_verifier: Callable[[Any], bool] | None = None,
     ) -> None:
         if not callable(getattr(enforcer, "execute", None)):
             raise TypeError("enforcer must provide execute(envelope, proof, action)")
@@ -353,10 +365,22 @@ class EnforcerReleaseGate:
         if timeout is not None and (not isinstance(timeout, (int, float)) or timeout <= 0):
             raise ValueError("timeout must be a positive number of seconds, or None")
         self._policy_version = policy_version
+        # Enforcer 0.1.1 can hand us the ALLOW decision before the callback runs, so even a release that
+        # aborts after the grant is spent keeps its decision record. 0.1.0 cannot; then the record is
+        # simply absent on that path, as before.
         self._dock = dock if dock is not None else CNSDock()
         #: Bounds the proof provider and the whole Enforcer call (proof verification,
         #: status revalidation, replay consumption). None waits forever.
         self.timeout = timeout
+        #: Optional. Called with the CNS IdentityContext, before Enforcer is asked and again just
+        #: before delivery; only an exact True passes. ZTS binds an identity but does not
+        #: authenticate one: this is where an operator who has an authenticator plugs it in.
+        #: With none configured, the grant issuer is the only authentication, and it signs
+        #: the subject digest into the grant.
+        self.identity_verifier = identity_verifier
+        if identity_verifier is not None and not callable(identity_verifier):
+            raise TypeError("identity_verifier must be callable")
+        self._sealed = True
 
     @property
     def policy_version(self) -> str:
@@ -529,6 +553,13 @@ class EnforcerReleaseGate:
             return self._outcome(state, request, profile, ReleaseReason.ALLOWED)
         raise _Deny(ReleaseReason.ENFORCER_ERROR)
 
+    def _takes_on_allow(self) -> bool:
+        """Whether the Enforcer in use accepts ``on_allow``. Asked per call, never cached."""
+        try:
+            return "on_allow" in inspect.signature(self._enforcer.execute).parameters
+        except (TypeError, ValueError):
+            return False
+
     def _execute_bounded(self, envelope: Any, proof: Any, guarded: Callable[[], Any], state: "_State") -> Any:
         """Call Enforcer, giving up after ``timeout``, without letting a late call deliver.
 
@@ -537,14 +568,17 @@ class EnforcerReleaseGate:
         takes, so the callback refuses when it arrives. If the callback is already
         running, delivery is in progress and is waited for rather than abandoned.
         """
+        extra: dict[str, Any] = {}
+        if self._takes_on_allow():
+            extra["on_allow"] = lambda decision: setattr(state, "decision", _decision_record(decision))
         if self.timeout is None:
-            return self._enforcer.execute(envelope, proof, guarded)
+            return self._enforcer.execute(envelope, proof, guarded, **extra)
         box: dict[str, Any] = {}
         done = threading.Event()
 
         def runner() -> None:
             try:
-                box["value"] = self._enforcer.execute(envelope, proof, guarded)
+                box["value"] = self._enforcer.execute(envelope, proof, guarded, **extra)
             except BaseException as exc:
                 box["error"] = exc
             finally:
@@ -597,6 +631,13 @@ class EnforcerReleaseGate:
             self._dock.verify_docked_artifact(request.identity, artifact)
         except Exception:
             raise _Deny(ReleaseReason.CNS_VERIFICATION_FAILED) from None
+        if self.identity_verifier is not None:
+            try:
+                ok = call_with_timeout(self.identity_verifier, self.timeout, request.identity) is True
+            except Exception:  # includes CallTimeout: an authenticator that cannot answer is a no
+                ok = False
+            if not ok:
+                raise _Deny(ReleaseReason.IDENTITY_NOT_AUTHENTICATED)
 
     def _outcome(
         self,

@@ -26,7 +26,15 @@ dev = ["pytest>=7.4"]
 cns = ["cns @ git+https://github.com/wking53214/CNS.git@v2.3.0"]
 # Optional: the Enforcer release adapter (zts.release). Pinned to a commit because
 # Enforcer publishes no tags and is a 0.1.0 prototype. Needs the cns extra as well.
-enforcer = ["tack-enforcer @ git+https://github.com/wking53214/Enforcer.git@3ff6a56a0c417a83e3b002feed6bdec4175454f3"]
+enforcer = ["tack-enforcer @ git+https://github.com/wking53214/Enforcer.git@b2ee45220e4b92932b93b5ee2c2a0f159541d86a"]
+# Optional: zts.trust and zts.status, the Ed25519 grant verifier and the HTTPS status client.
+trust = ["cryptography>=42"]
+# Optional: zts.replay_postgres, the shared replay store. The server is yours; this is only the client.
+replay-postgres = ["psycopg[binary]>=3.1"]
+# Optional: zts.anchor_tsa, the RFC 3161 ledger anchor.
+tsa = ["cryptography>=42", "asn1crypto>=1.5"]
+# Everything a production deployment of the Enforcer path uses.
+production = ["cryptography>=42", "asn1crypto>=1.5", "psycopg[binary]>=3.1", "cns @ git+https://github.com/wking53214/CNS.git@v2.3.0", "tack-enforcer @ git+https://github.com/wking53214/Enforcer.git@b2ee45220e4b92932b93b5ee2c2a0f159541d86a"]
 
 [project.scripts]
 zts = "zts.cli:main"
@@ -37,3 +45,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff.lint.per-file-ignores]
+# A fixture imported from a helper module and then named as a test argument is how pytest shares fixtures.
+"tests/*" = ["F811"]

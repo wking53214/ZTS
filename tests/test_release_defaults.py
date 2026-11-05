@@ -34,6 +34,8 @@ CLEAN = "Disk utilization reached 94% on node 3 at 02:17 UTC."
 DIRTY = "As an AI, I may be wrong."
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "src" / "zts"
+#: The only modules that adapt Enforcer. Each imports it inside a function, never at module level.
+ENFORCER_ADAPTERS = {"release.py", "trust.py", "status.py", "replay_postgres.py"}
 
 
 class Sink:
@@ -252,7 +254,7 @@ def test_only_the_release_module_imports_enforcer_and_only_inside_a_function():
                 if name == "enforcer" or name.startswith("enforcer."):
                     if id(node) in top:
                         at_module_level.setdefault(rel, []).append(name)
-                    if rel != "release.py":
+                    if rel not in ENFORCER_ADAPTERS:
                         elsewhere.setdefault(rel, []).append(name)
     assert at_module_level == {} and elsewhere == {}
 
@@ -307,3 +309,27 @@ def test_the_ledger_never_holds_matched_payload_text(mode):
     gate_entries = [e for e in t.ledger.entries if e.layer.startswith("G")]
     assert any("finding(s)" in e.detail for e in gate_entries)
     assert t.ledger.verify()[0]
+
+
+def test_optional_third_party_packages_are_only_imported_inside_functions():
+    """zts must import with cryptography, asn1crypto and psycopg all absent."""
+    optional = ("cryptography", "asn1crypto", "psycopg")
+    for path in PACKAGE.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            names = [a.name for a in node.names] if isinstance(node, ast.Import) else \
+                [node.module] if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module else []
+            for name in names:
+                assert name.split(".")[0] not in optional, (path.name, name)
+
+
+def test_zts_imports_with_the_optional_crypto_and_database_packages_blocked():
+    done = _fresh("""
+        import sys
+        for m in ("cryptography", "asn1crypto", "psycopg"):
+            sys.modules[m] = None
+        import zts, zts.trust, zts.release, zts.ops
+        print('ok')
+    """, block=True)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip().endswith("ok")

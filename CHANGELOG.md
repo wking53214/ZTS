@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Real trust, status, replay and anchor components (third pass)
+
+Added (optional extras; `zts` itself still has no runtime dependency):
+- `zts.trust` (`zts[trust]`): `Ed25519GrantVerifier`, `FileTrustRoot`, `TrustRoot`. One algorithm, pinned
+  keys by id, role/status/window/issuer checks, signature before parsing, canonical strict encoding,
+  rotation and revocation by editing the file, no fallback when the file breaks.
+- `zts.status` (`zts[trust]`): `HttpStatusRevalidator`. Verified HTTPS only, signed answers, a fresh
+  challenge echoed back, no redirects, size cap, timeout, no cache.
+- `zts.replay_postgres` (`zts[replay-postgres]`): `PostgresReplayStore`, a shared replay store for several
+  hosts. Safe `prune()`; `health()` verifies its uniqueness constraints.
+- `zts.anchor_tsa` (`zts[tsa]`): `Rfc3161Anchor`, an external ledger anchor on a timestamp authority you pin.
+  Lazy publishing with back-off, flushed at the end of each release; every token re-verified on every read.
+- `EnforcerReleaseGate(identity_verifier=)`: optional, fail-closed, checked before Enforcer is asked and
+  again before delivery. `ReleaseReason.IDENTITY_NOT_AUTHENTICATED`.
+- `TowerResult.audit_anchored`; metrics `anchor_failures`; `health()` reports `anchor_service`.
+- `production=True` now reports PASS for ZTS's own verifier, status client, replay store and anchor (and FAIL
+  for an empty trust root, an unreachable replay table, a table missing a uniqueness constraint, a non-verified
+  TLS path to a remote database) while trust-root governance, anchor independence and identity stay UNKNOWN.
+- `docs/WIRE_FORMATS.md` and byte-exact golden vectors (`tests/test_wire_vectors.py`).
+- `pip install "zts[production]"`; a `production-stack` CI job with a real PostgreSQL and OpenSSL.
+- Uses Enforcer 0.1.1's `on_allow` when present (decision record kept on an aborted release); still works
+  with Enforcer 0.1.0.
+- Pins Enforcer to 0.1.1 (`b2ee452`, Enforcer PR #7).
+
+Changed:
+- The structural test that only `release.py` may import Enforcer now allows the adapter modules, each
+  importing it inside a function. Optional third-party packages may only be imported inside functions.
+- `EnforcerReleaseGate.timeout` and `identity_verifier` are read-only after construction.
+
+Not done:
+- The issuer and status *services* (they are yours), a reference trust-root tool, interop with a public TSA,
+  replication or failover durability of the replay database, ledger retention.
+
+
 ### Production hardening of the release boundary (second pass)
 
 Added:

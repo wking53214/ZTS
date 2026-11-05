@@ -15,7 +15,7 @@ decision, delivers through a protected callback, asks the receiving side whether
 delivery arrived, and writes a durable, hash-chained audit record.
 
 **Does not.** It does not decide who may receive output (Enforcer's grant does). It does not
-issue grants, hold a trust root, or know whether an authority is trustworthy. It does not
+issue grants or decide who owns the trust root, and it cannot know whether an authority is trustworthy. It does not
 authenticate the caller's identity; it only binds the release to the identity's CNS digest.
 It does not make the output true, safe or appropriate: the gates are lexical and syntactic
 filters. It is a library inside your process and cannot contain code that runs in that same
@@ -63,9 +63,16 @@ described in [ARCHITECTURE.md](ARCHITECTURE.md).
 pip install -e .
 ```
 
-No dependencies. Python 3.11+. Two optional extras: `.[cns]` (the CNS identity
-dock, CNS `v2.3.0`) and `.[enforcer]` (the release adapter's Enforcer, pinned to a
-commit). The release boundary needs both.
+No dependencies. Python 3.11+. Everything else is an optional extra, imported only when you use it:
+
+| Extra | Adds | For |
+|---|---|---|
+| `cns` | CNS `v2.3.0` | the identity dock |
+| `enforcer` | Enforcer, pinned to a commit | the release boundary |
+| `trust` | `cryptography` | the Ed25519 grant verifier and the HTTPS status client |
+| `replay-postgres` | `psycopg[binary]` | the shared replay store (the PostgreSQL server is yours) |
+| `tsa` | `cryptography`, `asn1crypto` | the RFC 3161 ledger anchor |
+| `production` | all of the above | a full production assembly |
 
 ## Use
 
@@ -129,11 +136,11 @@ contract layer. It supplies the identity shape and `subject_digest`. ZTS uses on
 nothing: a valid digest proves an identity is the one named, not that it may receive anything.
 The dock accepts CNS 2.x at or above 2.3.0 and refuses anything else.
 
-**Enforcer** (pinned to commit `3ff6a56`, accepted as `0.1.x`) is the authorization authority. Its
+**Enforcer** (pinned to commit `b2ee452` (0.1.1), accepted as `0.1.x`) is the authorization authority. Its
 `execute(envelope, proof, callback)` verifies the proof through a verifier you supply, checks the
 grant is bound to the exact envelope, current and within its lifetime, asks your status source for
 current authorization, consumes the grant atomically, and only then runs the callback. Its defaults
-reject everything. Enforcer is 0.1.0 and describes itself as a prototype.
+reject everything. Enforcer describes itself as a prototype.
 
 **ZTS** enforces. The release *is* the callback Enforcer guards, so a denied release has no path to
 the output.
@@ -169,19 +176,32 @@ chosen explicitly, performs no authorization, and is refused by `require_enforce
 
 ## How proofs are verified, revalidated and kept from replaying
 
-* **Proofs.** Enforcer calls the `ProofVerifier` you configure. **No production verifier exists in
-  this repository or in Enforcer.** The tests use an HMAC fixture. Until a real one is chosen
-  (decision A in [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md)), an unconfigured
-  system denies every release.
-* **Revalidation.** Enforcer asks your `AuthorizationRevalidator` for a status bound to the
-  envelope and policy version, no older than 30 seconds. **No production status source exists**
-  (decision B). Status is checked once, inside Enforcer, immediately before the grant is spent; a
-  revocation that lands after that check and before delivery is not caught (a tested known limit).
-* **Replay.** Enforcer consumes `(issuer, nonce)` and the request id atomically. On one host with a
-  file-backed `SQLiteReplayStore` this holds across restarts and across processes sharing the file
-  (tested). In-memory stores forget at restart, and `production=True` refuses one. **Several hosts
-  are not protected** (decision C). ZTS bounds the grant provider and the Enforcer call with a
-  timeout, and an abandoned call can never deliver late (tested).
+* **Proofs.** Enforcer calls the `ProofVerifier` you configure. ZTS ships one for production,
+  `zts.trust.Ed25519GrantVerifier`: it accepts only Ed25519, only keys pinned in a trust-root file you
+  control, only the right role, only unexpired and unrevoked keys, and only a key bound to the grant's own
+  issuer. It checks the signature before it parses the claims, refuses anything malformed or non-canonical,
+  and gives Enforcer one generic refusal while reporting a specific reason to your alert hook. Rotation and
+  revocation take effect when the trust-root file changes, with no restart; a broken file refuses
+  everything. Byte-exact formats and test vectors: [docs/WIRE_FORMATS.md](docs/WIRE_FORMATS.md). **Who
+  owns the trust root and the issuer is yours to decide and run.** ZTS does not issue grants.
+* **Revalidation.** `zts.status.HttpStatusRevalidator` asks the issuer over verified HTTPS, on every
+  release, whether this exact grant is still current. The answer must be signed by a `status` key and echo
+  a fresh random challenge, the envelope digest, the policy version and the grant's identity, so an old
+  "current" answer cannot be replayed. There is no cache; freshness is Enforcer's bound (30 seconds by
+  default). Any error, timeout, redirect, oversized or unsigned answer is a denial. A revocation that lands
+  after that check and before delivery is not caught (a tested known limit).
+* **Replay.** Enforcer consumes `(issuer, nonce)` and the request id atomically. For one host that is its
+  SQLite store, file-backed. For several hosts it is `zts.replay_postgres.PostgresReplayStore`: one
+  `INSERT ... ON CONFLICT DO NOTHING` over two unique constraints, tested against a real PostgreSQL server
+  with threads, processes and two complete towers racing for one grant. A database error denies the
+  release. Expired records can be pruned safely (`prune()`); in-memory SQLite stores are refused by
+  `production=True`. ZTS cannot see your database's replication: asynchronous failover can forget a spent
+  grant. ZTS bounds the grant provider and the Enforcer call with a timeout, and an abandoned call can
+  never deliver late (tested).
+* **Identity.** ZTS binds a release to the CNS digest of the identity it is given. It does not
+  authenticate that identity: the grant issuer authenticates the subject before signing, and an optional
+  `identity_verifier` hook on the gate lets you add your own check, run before Enforcer is asked and again
+  just before delivery, failing closed. With no hook, the issuer is the only authentication.
 
 ## The audit ledger
 
@@ -189,40 +209,61 @@ Every decision appends a hash-chained entry. With a `FileLedgerStore` each entry
 fsynced before it is acknowledged, appends are serialized across processes, an interrupted final
 write is removed and reported on the next open, and any other damage makes the open fail instead of
 being repaired. A write-ahead entry is required before any grant is requested, so a release cannot
-begin if the audit trail cannot be written. An optional `LedgerAnchor` (`FileLedgerAnchor` is
-provided) lets `verify_anchored()` detect truncation, rollback and tail replacement.
+begin if the audit trail cannot be written.
 
-Honest limits: a hash chain is tamper evidence, not tamper-proofing; the anchor only helps if it is
-out of the writer's reach, which this code cannot check (decision D); nothing is pruned or
-replicated; the ledger holds fingerprints and counts, never payload or matched text.
+**Anchoring.** A `LedgerAnchor` lets `verify_anchored()` detect truncation, rollback and tail replacement.
+`Rfc3161Anchor` stamps the ledger head with a trusted timestamp authority you choose and pin: every token is
+re-verified against your pinned TSA certificate on every read (signature, content binding, key usage,
+validity at the stamped time). Stamping is lazy so a slow TSA never stalls a ledger write; the head is
+stamped at the end of every release. A TSA that is down does not undo a delivery. The result says
+`audit_anchored=False`, a metric counts it, and `health()` turns degraded. `FileLedgerAnchor` is a simpler
+local alternative.
+
+Honest limits: a hash chain is tamper evidence, not tamper-proofing. **A TSA proves a head existed; it does
+not remember your ledger.** Someone who can rewrite both the ledger and the receipts file can restore an
+older consistent pair, so keep copies of the receipts where the ledger's writer cannot reach them. The
+anchor was tested against OpenSSL's independent RFC 3161 implementation, **not against any public TSA**.
+Nothing is replicated or pruned, and the ledger holds fingerprints and counts, never payload or matched text.
 
 ## Which capabilities are real, and which depend on your deployment
 
-| Implemented and tested here | Deployment-dependent or absent |
+| Implemented and tested here | Deployment-dependent, absent, or unknown |
 |---|---|
-| Guarded release; denial never reaches the callback | A proof verifier and a trust root (absent) |
-| Six outcome states; independent delivery confirmation | A status/revocation source (absent) |
-| Durable, cross-process, recoverable ledger; file anchor | Whether the anchor is independent (unknown) |
-| Cancellation, timeouts, graceful shutdown, off-loop `run()` | Multi-host replay protection (absent) |
-| Sealed release controls; production startup validation | Whether the receiver is independent of the sink (unknown) |
-| Metrics, structured audit events, health | Identity authentication (absent by design) |
-| Single-host replay protection (Enforcer's SQLite) | Process isolation of the delivery path (unknown) |
+| Guarded release; denial never reaches the callback | Who owns the trust root and issues grants (yours to run) |
+| Ed25519 grant verifier with a rotatable, revocable trust root | Whether the trust root is legitimate (UNKNOWN) |
+| Online signed status revalidation, no cache | The issuer and status service themselves (yours) |
+| Shared PostgreSQL replay store, real-server tests | Your database's replication and failover durability |
+| Single-host replay protection (Enforcer's SQLite) | Whether the TLS path to your database is verified |
+| Durable, cross-process, recoverable ledger | Replication, backup, retention of the ledger files |
+| RFC 3161 anchor, verified against an independent TSA | Interop with a public TSA; where the receipts are kept |
+| Six outcome states; independent delivery confirmation | Whether the receiver is independent of the sink |
+| Cancellation, timeouts, graceful shutdown, off-loop `run()` | Process isolation of the delivery path |
+| Sealed release controls; `production=True` startup validation | Identity authentication (the issuer's job, or your hook) |
+| Metrics, structured audit events, health | Alert rules, dashboards, on-call (yours) |
 
 ## Configuring and running production
 
-See [docs/OPERATIONS.md](docs/OPERATIONS.md) for configuration, secrets, monitoring, backup and
-recovery, and incident response, and [docs/RELEASE_BOUNDARY.md](docs/RELEASE_BOUNDARY.md) for the
-envelope, the checks and the denial codes. The short version:
+See [docs/OPERATIONS.md](docs/OPERATIONS.md) for secrets, monitoring, backup and recovery, rotation and
+incident response, [docs/WIRE_FORMATS.md](docs/WIRE_FORMATS.md) for what an issuer must produce, and
+[docs/RELEASE_BOUNDARY.md](docs/RELEASE_BOUNDARY.md) for the envelope, the checks and the denial codes.
+`pip install "zts[production]"` pulls every optional dependency. The assembly:
 
 ```python
+trust = FileTrustRoot("/etc/zts/trust.json")                      # keys you pinned: grant and status roles
+enforcer = Enforcer(
+    verifier=Ed25519GrantVerifier(trust, on_reject=alert),
+    revalidator=HttpStatusRevalidator("https://issuer.internal", trust, timeout=3.0),
+    replay_store=PostgresReplayStore("host=db.internal dbname=zts sslmode=verify-full"),
+)
 tower = DeterministicIntegrityTower(
     "ops",
     production=True,   # refuses to start unless these controls are present
-    release_gate=EnforcerReleaseGate(configured_enforcer, policy_version="2026-11-3", timeout=5.0),
+    release_gate=EnforcerReleaseGate(enforcer, policy_version="2026-11-3", timeout=5.0),
     release_sink=deliver,
     delivery_confirmer=receiver_has,           # asks the receiving side
     hmac_key=release_signature_key,            # supplied, not per-process random
-    ledger=ValLedger(key=ledger_key, store=FileLedgerStore(path), anchor=FileLedgerAnchor(anchor_path)),
+    ledger=ValLedger(key=ledger_key, store=FileLedgerStore(path),
+                     anchor=Rfc3161Anchor(tsa_url, [tsa_signing_cert_pem], receipts_path)),
 )
 result = tower.enforce(text, release=ReleaseRequest(
     identity=identity, artifact=CNSDock().to_zts_artifact(identity),
@@ -231,24 +272,27 @@ tower.readiness()   # every check: PASS, FAIL, or UNKNOWN with a reason
 tower.close()       # drain in-flight releases, then close the ledger
 ```
 
-`production=True` stops a misconfigured tower from starting. It cannot vouch for a custom verifier,
-status source or replay store: those report `UNKNOWN`, and you have to review them yourself.
+`production=True` stops a misconfigured tower from starting, and it reports PASS only for what ZTS can
+check itself: ZTS's own verifier, status client, replay store and anchor. Trust-root governance, identity
+authentication, anchor independence and any custom adapter stay `UNKNOWN`; people have to establish them.
 
 ## Guarantees NOT provided
 
-* That any grant is genuine. That depends on a verifier and trust root that do not exist yet.
+* That any grant is genuine in the world. ZTS checks signatures against keys you pinned; whether those
+  keys belong to a trustworthy issuer is your decision and nothing here can check it.
 * That a revocation is seen between Enforcer's status check and delivery.
 * Protection from code in the same process: it can call the delivery callback directly, read keys, or
   edit memory. The control is process or network isolation of the delivery path.
-* Replay protection across hosts, or across a restart if you pass an in-memory store.
-* Tamper-proof audit. The chain is tamper evident; truncation is detectable only against an anchor
-  you place out of the writer's reach.
+* Replay protection that survives your database losing committed rows (asynchronous failover).
+* Tamper-proof audit. The chain is tamper evident; truncation is detectable against an anchor, and a
+  timestamp authority does not remember your ledger, so a consistent rollback of ledger and receipts is
+  invisible unless someone holds newer receipts elsewhere.
 * That the receiver is independent of the sink, so that a confirmation means something.
-* That output is true, safe or correct. The gates are filters, and the README below documents their
-  limits.
+* That output is true, safe or correct. The gates are filters, and the README below documents their limits.
 * That `release_id` is unique across your system. Enforcer enforces uniqueness for ids it has seen.
-* Authentication of the caller. Whoever holds a valid grant for a subject can present that subject.
-* Any claim about a real deployment. None has been observed.
+* Authentication of the caller beyond what your issuer and your optional hook do.
+* Interop with any public timestamp authority (untested), or any claim about a real deployment (none has
+  been observed).
 
 Existing callers that relied on the tower releasing by default must now choose a legacy mode:
 `DeterministicIntegrityTower("ops", capstone=ArchitectsProtocol(ReleaseMode.AUTO))`. That performs
@@ -342,15 +386,20 @@ Numbers above are from one run on one machine. Run `zts bench` for yours.
 ## Tests
 
 ```bash
-pytest        # 335 pass, 8 skip without cns or enforcer installed
-pytest        # 639 pass with `pip install -e ".[dev,cns,enforcer]"`
+pytest   # 337 pass, 15 skip with nothing optional installed
+pytest   # 894 pass with every extra, a PostgreSQL server and openssl, on the pinned Enforcer 0.1.1
+pytest   # 887 pass, 7 skip on Enforcer 0.1.0 (still supported; the 0.1.1 additions are skipped)
 ```
 
-The skips are whole modules that need the real CNS or the real Enforcer: the CNS connector tests and
-the release-boundary suites. CI runs them with `ZTS_REQUIRE_CNS=1` and `ZTS_REQUIRE_ENFORCER=1`,
-where a missing package is a failure, not a skip. The test fixtures that stand in for a proof
-verifier and a status source (`tests/release_kit.py`) are not production code and prove nothing
-about a real issuer or authority. See [docs/RELEASE_BOUNDARY.md](docs/RELEASE_BOUNDARY.md#tests).
+The skips are whole modules that need a real package or server: CNS, Enforcer, PostgreSQL binaries,
+OpenSSL's `ts` command, or the Enforcer 0.1.1 additions when an older Enforcer is installed. CI runs the full set in the `production-stack` job under
+`ZTS_REQUIRE_CNS/ENFORCER/POSTGRES/TSA=1`, where a missing piece is a failure, not a skip.
+
+What the tests stand on, so nobody mistakes them for more: the issuer, status service, timestamp authority
+and receiving side are **fixtures** (`tests/issuer_kit.py`, `tests/tsa_kit.py`, `tests/release_kit.py`). The
+issuer encoder shares no code with `zts.trust`, the TSA is OpenSSL, the replay tests use a real PostgreSQL
+server. They prove the code against independent implementations. They prove nothing about a real issuer,
+authority, timestamp authority or deployment. See [docs/RELEASE_BOUNDARY.md](docs/RELEASE_BOUNDARY.md#tests).
 
 ## What this is
 
