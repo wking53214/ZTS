@@ -264,6 +264,7 @@ def _probe_enforcer(gate: Any) -> list[Check]:
     enforcer = getattr(gate, "_enforcer", None)
     checks = [
         _probe_verifier(getattr(enforcer, "_verifier", None)),
+        _probe_rollback(getattr(enforcer, "_verifier", None)),
         _probe_status(getattr(enforcer, "_revalidator", None), getattr(enforcer, "_verifier", None)),
     ]
     checks += _probe_replay_store(getattr(enforcer, "_replay_store", None))
@@ -312,6 +313,26 @@ def _probe_verifier(verifier: Any) -> Check:
                                  "Whether the trust root itself is legitimate is not something this can check")
     return Check(name, UNKNOWN, f"{getattr(verifier, 'verifier_id', '?')}: a custom verifier; ZTS cannot "
                                 "verify what it does. Review and exercise it")
+
+
+def _probe_rollback(verifier: Any) -> Check:
+    """Can an older copy of the trust root bring a revoked key back? PASS only if something refuses that."""
+    name = "trust_root_rollback"
+    from .trust import Ed25519GrantVerifier, FileTrustRoot
+
+    trust = getattr(verifier, "_trust", None)
+    if not isinstance(verifier, Ed25519GrantVerifier) or not isinstance(trust, FileTrustRoot):
+        return Check(name, UNKNOWN, "not a file trust root managed by ZTS: how an older copy is kept out is the "
+                                    "operator's to establish")
+    kind = trust.describe()["rollback_protection"]
+    if kind == "serial_store":
+        return Check(name, PASS, "a serial store refuses any trust root older than one already accepted. It does "
+                                 "not stop someone who can write the file from authoring a newer one")
+    if kind == "pinned_digest":
+        return Check(name, PASS, "the file is pinned to a digest, so no other content is accepted. Every rotation "
+                                 "therefore needs a restart with the new digest")
+    return Check(name, UNKNOWN, "nothing stops an older copy of the trust root from being put back, which would "
+                                "un-revoke a key. Use a serial store or a pinned digest")
 
 
 def _probe_status(revalidator: Any, verifier: Any) -> Check:

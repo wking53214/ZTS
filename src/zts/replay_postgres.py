@@ -226,4 +226,76 @@ class PostgresReplayStore:
         return info
 
 
-__all__ = ["PostgresReplayStore", "ReplayStoreError"]
+class PostgresSerialStore:
+    """The highest trust-root serial any host has accepted, kept in the same PostgreSQL as the replay table.
+
+    Implements ``zts.trust.SerialStore``. One row per ``name``. A new serial is stored; the same serial with
+    the same digest is accepted again; a lower serial, or the same serial with different content, is refused,
+    and so is any failure to reach the database (everything is denied while it is down, like the replay store).
+
+    A host can only be as strong as this table: whoever can UPDATE or DELETE the row can lower the mark.
+    Keep the trust-root file's writers out of this database, and give the release hosts only what they need.
+    """
+
+    def __init__(
+        self,
+        dsn: str | None = None,
+        *,
+        connect: Callable[[], Any] | None = None,
+        name: str = "default",
+        table: str = "zts_trust_serial",
+        statement_timeout: float = 5.0,
+        create: bool = True,
+    ) -> None:
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("name is required")
+        if not _IDENT.fullmatch(table):
+            raise ValueError("table must be a lowercase SQL identifier")
+        self._name, self._table = name, table
+        # Reuses the replay store's connection handling; its own table is never touched (create=False).
+        self._pg = PostgresReplayStore(dsn, connect=connect, statement_timeout=statement_timeout, create=False)
+        if create:
+            self.ensure_schema()
+
+    def ensure_schema(self) -> None:
+        from .trust import TrustRootError
+
+        try:
+            conn = self._pg._conn()
+            with conn.transaction():
+                conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"zts-serial:{self._table}",))
+                conn.execute(
+                    f"CREATE TABLE IF NOT EXISTS {self._table} (name text PRIMARY KEY, "
+                    "serial bigint NOT NULL CHECK (serial > 0), digest text NOT NULL, "
+                    "updated_at timestamptz NOT NULL DEFAULT now())")
+        except Exception as exc:
+            self._pg._drop()
+            raise TrustRootError(f"cannot create the trust-root serial table: {type(exc).__name__}") from None
+
+    def record(self, serial: int, digest: str) -> None:
+        from .trust import TrustRootError
+
+        t = self._table
+        try:
+            conn = self._pg._conn()
+            with conn.transaction():
+                conn.execute(
+                    f"INSERT INTO {t} (name, serial, digest) VALUES (%s, %s, %s) "  # nosec B608
+                    f"ON CONFLICT (name) DO UPDATE SET serial = EXCLUDED.serial, digest = EXCLUDED.digest, "
+                    f"updated_at = now() WHERE {t}.serial < EXCLUDED.serial",
+                    (self._name, serial, digest))
+                row = conn.execute(f"SELECT serial, digest FROM {t} WHERE name = %s", (self._name,)).fetchone()  # nosec B608
+        except Exception as exc:
+            self._pg._drop()
+            raise TrustRootError(f"the trust-root serial store did not answer: {type(exc).__name__}") from None
+        if row is None or (row[0], row[1]) != (serial, digest):
+            seen = "unknown" if row is None else str(row[0])
+            raise TrustRootError(
+                f"trust root serial {serial} is not accepted: the highest recorded is {seen}"
+                + ("; two different trust roots claim that serial" if row is not None and row[0] == serial else ""))
+
+    def close(self) -> None:
+        self._pg.close()
+
+
+__all__ = ["PostgresReplayStore", "PostgresSerialStore", "ReplayStoreError"]
