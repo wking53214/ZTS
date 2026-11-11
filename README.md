@@ -387,9 +387,9 @@ Numbers above are from one run on one machine. Run `zts bench` for yours.
 ## Tests
 
 ```bash
-pytest   # 337 pass, 23 skip with nothing optional installed
-pytest   # 1031 pass with every extra, a PostgreSQL server and openssl, on the pinned Enforcer 0.1.1
-pytest   # 1014 pass, 17 skip on Enforcer 0.1.0 (still supported; the 0.1.1 additions are skipped)
+pytest   # 337 pass, 24 skip with nothing optional installed
+pytest   # 1033 pass with every extra, a PostgreSQL server and openssl, on the pinned Enforcer 0.1.1
+pytest   # 1016 pass, 17 skip on Enforcer 0.1.0 (still supported; the 0.1.1 additions are skipped)
 ```
 
 The skips are whole modules that need a real package or server: CNS, Enforcer, PostgreSQL binaries,

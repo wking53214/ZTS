@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Crash drill (seventh pass)
+
+Added:
+- `tests/test_crash_recovery.py` (with `tests/crash_host.py`): a real host process is killed with SIGKILL in the middle
+  of a delivery, against a real PostgreSQL, trust root, status client, RFC 3161 anchor and ledger file; a fresh process
+  then opens the same files. Verified: the ledger opens and its chain and anchor verify; the grant is spent (a retry is
+  denied `GRANT_REPLAYED`); a new release under a new grant delivers; health is `ok`.
+- `docs/DEPLOYMENT.md`: a verified helper, `unfinished_releases(ledger)`, that lists releases whose delivery began and
+  was never recorded as ended. It is tested against a retry under the same release id, which writes its own entries and
+  must not hide the earlier unfinished delivery.
+
+Changed:
+- The guide's acceptance test 11 said a killed host's release is `delivery_unknown`. It is not: a hard kill leaves a
+  `RELEASING` entry and nothing after it, because no process was alive to record anything. The guide and the operations
+  document now say so and point at the helper.
+
+
 ### Readiness through the public interface, and a deployment guide (sixth pass)
 
 Added:
