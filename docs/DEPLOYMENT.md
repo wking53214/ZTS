@@ -220,10 +220,44 @@ the issuer, the status service, the TSA or the database. Record the date and res
 | 8 | In a test copy, drop a replay constraint | Releases denied; `health()` lists `replay_store_live` | `health()` |
 | 9 | Make the status service answer slowly | Denied within the `timeout`, not after | `availability_failures` |
 | 10 | Make the identity hook return false | `IDENTITY_NOT_AUTHENTICATED` | `security_denials`; ERROR log |
-| 11 | Kill the process mid-delivery; restart | Ledger opens; the release is `delivery_unknown`, not retried blindly | `delivery_unknown` |
+| 11 | Kill the process mid-delivery (SIGKILL); restart | The ledger opens and verifies. The release has `ATTEMPT` and `RELEASING` entries and **no final entry**: nothing records `delivery_unknown`, because no process was alive to. Find it with the helper below, ask the receiver whether it holds the artifact, and do not retry the same grant (it is spent: `GRANT_REPLAYED`). Issue a new grant under a new release id | The helper; `tests/test_crash_recovery.py` does this for real |
 | 12 | Restore an old ledger and its receipts together | Detected only if your off-box receipts are newer | Compare with the custody copy |
 | 13 | Fail the receipt export destination | `receipt_export_live` in `health()`; release still delivers | `health()` |
 | 14 | Try section 8's checks as the application user | Every one fails | Your own evidence |
+
+### After a crash: finding the release whose delivery is unknown
+
+A hard stop leaves no event and no `delivery_unknown` result. The ledger still shows it: a release whose delivery
+began (`RELEASING`) and has no final entry (`RELEASED`, `UNCONFIRMED` or `HELD`). Run this after every unclean stop:
+
+```python
+# verified-function
+def unfinished_releases(ledger):
+    """Release ids with a delivery that began and was never recorded as ended.
+
+    A new attempt under the same release id does not hide an earlier one: a retry after a crash writes its own
+    ATTEMPT and a final entry, and the delivery it follows is still unfinished.
+    """
+    state, lost = {}, set()
+    for entry in ledger.entries:
+        if entry.layer != "TAP":
+            continue
+        release_id = entry.extra.get("release_id")
+        if entry.status == "ATTEMPT":
+            if state.get(release_id) == "delivering":
+                lost.add(release_id)  # a new attempt began while the last delivery had no ending
+            state[release_id] = "attempt"
+        elif entry.status == "RELEASING":
+            state[release_id] = "delivering"
+        elif entry.status in ("RELEASED", "UNCONFIRMED", "HELD"):
+            state[release_id] = "done"  # any final entry closes the current attempt
+    return sorted(lost | {r for r, s in state.items() if s == "delivering"})
+```
+
+For each id it returns, ask the receiving system whether it holds the artifact (the release id and the artifact's
+SHA-256 are what you have). Reconcile by writing a new ledger entry that names the release id; never edit an
+existing one. This was verified with a real process killed by SIGKILL during delivery, against a real PostgreSQL, TSA
+and status service: the chain verified, the grant was spent, a retry with it was denied, and a new release delivered.
 
 ## 10. Monitoring and incidents
 

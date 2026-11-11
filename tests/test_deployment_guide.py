@@ -32,6 +32,7 @@ def blocks(language: str, marker: str) -> list[str]:
 
 def test_the_guide_has_the_blocks_this_test_checks():
     assert len(blocks("python", "# verified-snippet")) == 2 and len(blocks("sql", "-- verified-sql")) == 1
+    assert len(blocks("python", "# verified-function")) == 1
 
 
 def test_the_python_blocks_import_real_names_and_call_real_signatures_with_real_keywords():
@@ -134,3 +135,25 @@ def test_the_guide_describes_the_trust_root_file_rules_the_code_enforces():
 
 def test_the_guide_uses_no_em_dashes():
     assert chr(0x2014) not in TEXT
+
+
+def test_the_unfinished_release_helper_in_the_guide_finds_exactly_the_releases_with_no_ending():
+    from zts.ledger import ValLedger
+
+    scope: dict = {}
+    exec(compile(blocks("python", "# verified-function")[0], "<guide>", "exec"), scope)  # noqa: S102
+    find = scope["unfinished_releases"]
+    ledger = ValLedger(key=b"l" * 32)
+    assert find(ledger) == []
+    for rid, steps in (("a", ["ATTEMPT", "RELEASING"]),                  # killed mid-delivery
+                       ("b", ["ATTEMPT", "RELEASING", "RELEASED"]),      # delivered
+                       ("c", ["ATTEMPT", "RELEASING", "UNCONFIRMED"]),   # delivery unknown, recorded
+                       ("d", ["ATTEMPT", "HELD"]),                       # denied before delivery
+                       ("e", ["ATTEMPT", "RELEASING"]),                  # killed mid-delivery
+                       ("f", ["ATTEMPT", "RELEASING", "ATTEMPT", "HELD"]),   # killed, then retried and denied
+                       ("g", ["ATTEMPT", "HELD", "ATTEMPT", "RELEASING", "RELEASED"]),  # denied, then delivered
+                       ("h", ["ATTEMPT", "RELEASING", "HELD"])):         # the sink stopped before any effect
+        for status in steps:
+            ledger.log("TAP", status, "x", "payload", release_id=rid)
+    ledger.log("G1", "RELEASING", "not a release entry", "payload", release_id="z")  # other layers are ignored
+    assert find(ledger) == ["a", "e", "f"]
