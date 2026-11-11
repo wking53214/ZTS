@@ -164,7 +164,9 @@ means "the result was not returned", **not** "nothing happened". Read the ledger
 delivered a second time. Decide whether it is a faulty client (a retry loop) or an attacker. If a
 grant was captured, treat the issuer channel as exposed.
 
-**Delivery unknown (`delivery_unknown`).** The grant is spent and the receiver did not confirm. Ask
+**Delivery unknown (`delivery_unknown`).** The grant is spent and the receiver did not confirm. After a hard stop
+(a kill, a power loss) there is no event and no such result: the ledger shows a `RELEASING` entry with no final entry
+for that release id, and [DEPLOYMENT.md](DEPLOYMENT.md) has the helper that lists them. Ask
 the receiving system whether it holds the artifact (`release_id`, artifact SHA-256 are in the
 event). Do not simply retry: a retry needs a new grant and a new release id and risks a duplicate.
 
