@@ -44,6 +44,11 @@ ZTS enforces and records. It does not issue grants, run a status service, host a
   `/tmp` is accepted but is a poor home for it.
 * **Rollback protection.** Give `FileTrustRoot` a `PostgresSerialStore` (the replay database is the natural home) so
   an older copy of the file is refused. Without it readiness reports `trust_root_rollback` UNKNOWN.
+* **Edit procedure.** One person prepares the new file. A second person runs
+  `python scripts/trust_root_review.py NEW.json --previous LIVE.json` and signs off on its output: it applies ZTS's own
+  parser, prints every key with its role, issuer, window and state, prints the SHA-256 to pin, and fails the review if the
+  serial does not rise, a revoked key becomes active again, or a key id changes role or issuer. It cannot judge whether the keys
+  are the right ones; that is the review. Keep the previous file until the new one has been live and healthy.
 * **Rotate:** add the new key with a start time before first use, raise `serial`, switch the issuer to it, let old
   grants expire, then mark the old key `revoked`. **Revoke after compromise:** set `status` to `revoked` and raise
   `serial`; every grant under that key fails from the next check.
@@ -122,6 +127,12 @@ GRANT SELECT, INSERT, UPDATE ON zts_trust_serial TO zts_release;
   writer cannot rewrite or delete (append-only, write-once, or an auditor's system). Raise if the write fails: the
   failure shows as `receipt_export_live` in `health()`, and `anchor.receipts()` lists everything for a re-export.
   Without this, an attacker who restores an older ledger and its receipts together is not detected.
+  `zts.receipts.HttpsReceiptExporter(url, headers={"Authorization": "Bearer ..."})` is a ready hook: one POST per receipt over
+  verified TLS with a 3 s deadline (it runs on the path of a ledger write), the URL never appears in an error, and
+  `exporter.resend(anchor, after_sequence=N)` pushes everything above the newest sequence the destination holds, oldest first,
+  stopping at the first failure so there is no gap. It cannot create the separation that makes the copy worth having: the
+  destination must be append-only for this host, must treat a repeated `sequence` as the same receipt, and should refuse a
+  different receipt for a sequence it already holds.
 * **Ledger and keys.** The ledger is a local file on a filesystem that honors `fsync` and `flock` (not a network
   share), one per host. The ledger key is a 32-byte secret in a file with mode 600 that you create before first start
   (`load_or_create_ledger_key` creates a missing file, so check it exists). The release signature key (32 bytes) comes
@@ -226,6 +237,29 @@ the issuer, the status service, the TSA or the database. Record the date and res
 | 12 | Restore an old ledger and its receipts together | Detected only if your off-box receipts are newer | Compare with the custody copy |
 | 13 | Fail the receipt export destination | `receipt_export_live` in `health()`; release still delivers | `health()` |
 | 14 | Try section 8's checks as the application user | Every one fails | Your own evidence |
+
+### What this repository already proves, and what only you can
+
+Each row's mechanism is exercised against stand-ins in the files named (a real PostgreSQL, OpenSSL's TSA, a killed process).
+That shows the code does the right thing. It does not show your issuer, status service, network, database or TSA do. Your run
+of the row is the evidence for those, and for the rows with no file at all.
+
+| # | Mechanism proven in | Only your run can show |
+|---|---|---|
+| 1 | `test_production_assembly.py`, `test_crash_recovery.py` | Your sink, receiver and confirmer |
+| 2 | `test_phase2_replay.py`, `test_ops.py` | That every host really shares one replay database |
+| 3 | `test_release_boundary.py`, `test_status_http.py` | The revocation-to-refusal time through your status service |
+| 4 | `test_trust_ed25519.py`, `test_release_boundary.py` | That your issuer signs with the keys in your trust root |
+| 5 | `test_phase2_trust_serial.py` | That your serial store is the one all hosts use |
+| 6 | `test_phase2_anchor_bound.py` | That blocking your TSA behaves the same through your firewall |
+| 7 | `test_replay_postgres.py`, `test_production_assembly.py` | Your database failover and recovery |
+| 8 | `test_phase2_replay.py` | Nothing beyond running it on a copy |
+| 9 | `test_phase2_deadlines.py`, `test_release_async.py` | Your status service's real slow modes (DNS and connect are not covered by the HTTP deadline) |
+| 10 | `test_identity_hook.py` | Your authenticator |
+| 11 | `test_crash_recovery.py` | Your receiver's answer to "do you hold it?" |
+| 12 | `test_anchor_tsa.py`, `test_ledger_durable.py` | That your off-box receipts really are newer and out of the writer's reach |
+| 13 | `test_phase2_anchor_bound.py`, `test_receipt_export.py` | Your destination refusing, and `resend` filling the gap |
+| 14 | none | Everything: it is about your operating system accounts |
 
 ### After a crash: finding the release whose delivery is unknown
 
