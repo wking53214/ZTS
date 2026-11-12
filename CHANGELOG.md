@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Deployment support (ninth pass)
+
+Added:
+- `zts.receipts.HttpsReceiptExporter`: a ready `on_receipt` hook (bounded HTTPS POST, URL never in an error) with `resend()`
+  that fills an outage without leaving a gap. `tests/test_receipt_export.py` runs it against a local TLS receiver; three
+  mutations (swallowing errors in resend, an off-by-one on the sequence, accepting http) each fail it. It cannot supply the
+  separation that makes an off-box copy worth having: that is the destination's job.
+- `scripts/trust_root_review.py`: the second person's tool for a trust-root edit (valid under ZTS's own parser, key table, pin
+  value, and a diff that fails on a serial that does not rise, a revoked key made active, or a changed role or issuer).
+  `tests/test_trust_root_review.py`; three mutations fail it.
+- `docs/DEPLOYMENT.md`: the edit procedure, the exporter, and a table of which repository test proves each acceptance test's
+  mechanism against which stand-in, and what only a run in your environment can show.
+
+Not done, and not doable from here: a run against your issuer, status service, database, TSA or network.
+
 ### Open items closed (eighth pass)
 
 Changed:

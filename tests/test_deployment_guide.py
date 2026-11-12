@@ -157,3 +157,19 @@ def test_the_unfinished_release_helper_in_the_guide_finds_exactly_the_releases_w
             ledger.log("TAP", status, "x", "payload", release_id=rid)
     ledger.log("G1", "RELEASING", "not a release entry", "payload", release_id="z")  # other layers are ignored
     assert find(ledger) == ["a", "e", "f"]
+
+
+
+def test_every_test_file_the_guide_names_exists():
+    """The traceability table in section 9 must not point at a file that was renamed or never written."""
+    named = set(re.findall(r"`(test_[a-z0-9_]+\.py)`", TEXT))
+    assert named, "the guide names no test file"
+    missing = sorted(n for n in named if not (Path(__file__).parent / n).exists())
+    assert missing == [], missing
+
+
+def test_every_script_the_guide_names_exists():
+    named = set(re.findall(r"scripts/([a-z0-9_]+\.py)", TEXT))
+    assert {"tsa_interop.py", "trust_root_review.py"} <= named
+    root = Path(__file__).resolve().parents[1] / "scripts"
+    assert [n for n in sorted(named) if not (root / n).exists()] == []
