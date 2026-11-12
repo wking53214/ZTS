@@ -133,6 +133,8 @@ GRANT SELECT, INSERT, UPDATE ON zts_trust_serial TO zts_release;
   stopping at the first failure so there is no gap. It cannot create the separation that makes the copy worth having: the
   destination must be append-only for this host, must treat a repeated `sequence` as the same receipt, and should refuse a
   different receipt for a sequence it already holds.
+  A reference receiver for a locked AWS S3 bucket (Object Lock), with its IAM policy, setup and a trial checklist, is in
+  `examples/receipt_receiver/`; its S3 code has only been tested against a stand-in client.
 * **Ledger and keys.** The ledger is a local file on a filesystem that honors `fsync` and `flock` (not a network
   share), one per host. The ledger key is a 32-byte secret in a file with mode 600 that you create before first start
   (`load_or_create_ledger_key` creates a missing file, so check it exists). The release signature key (32 bytes) comes

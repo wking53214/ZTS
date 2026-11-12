@@ -5,6 +5,11 @@
 ### Deployment support (ninth pass)
 
 Added:
+- `examples/receipt_receiver/`: a reference receiver for a locked AWS S3 bucket (Object Lock, write-if-absent, COMPLIANCE or
+  GOVERNANCE mode), with a Lambda entry point, least-privilege IAM, a trial checklist and what to alarm on. A repeated receipt
+  is accepted, a different one for a stored sequence is refused 409, and with a pinned authority certificate a receipt whose
+  token does not verify is refused 422. `tests/test_receipt_receiver.py` (38 tests, including the real exporter over TLS and
+  real tokens from OpenSSL's authority); seven mutations fail it. The S3 calls ran only against a stand-in client.
 - `zts.receipts.HttpsReceiptExporter`: a ready `on_receipt` hook (bounded HTTPS POST, URL never in an error) with `resend()`
   that fills an outage without leaving a gap. `tests/test_receipt_export.py` runs it against a local TLS receiver; three
   mutations (swallowing errors in resend, an off-by-one on the sequence, accepting http) each fail it. It cannot supply the
