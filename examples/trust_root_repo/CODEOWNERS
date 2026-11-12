@@ -1,0 +1,6 @@
+# Who must approve a change. Replace the team with your own: at least two people who can each do the review, and the
+# author of a change must not be the only one who can approve it.
+# The workflow and this file are covered too, because a change that quietly edits the check defeats it.
+/trust-root.json   @YOUR-ORG/trust-root-reviewers
+/.github/          @YOUR-ORG/trust-root-reviewers
+/CODEOWNERS        @YOUR-ORG/trust-root-reviewers
