@@ -124,3 +124,31 @@ jobs:
           ZTS_REQUIRE_ENFORCER_011: "1"
         run: python -m pytest tests/ -q -rs
 
+  cns-3:
+    # The same stack with CNS 3.0.0 over the pinned 2.3.0, to hold the dock's acceptance of major 3.
+    # ZTS_REQUIRE_CNS_3=1 turns a CNS that is not 3.x into a failure, so tests/test_cns_three.py cannot skip.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install the production extras, then CNS 3.0.0 over the pinned release
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,cns,enforcer,trust,replay-postgres,tsa]"
+          python -m pip install --no-deps "cns @ git+https://github.com/wking53214/CNS.git@v3.0.0"
+          python -m pip show cns
+      - name: Run the whole suite against CNS 3.0.0
+        env:
+          ZTS_REQUIRE_CNS: "1"
+          ZTS_REQUIRE_CNS_3: "1"
+          ZTS_REQUIRE_ENFORCER: "1"
+          ZTS_REQUIRE_POSTGRES: "1"
+          ZTS_REQUIRE_TSA: "1"
+          ZTS_REQUIRE_ENFORCER_011: "1"
+        run: python -m pytest tests/ -q -rs

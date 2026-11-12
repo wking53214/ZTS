@@ -212,10 +212,18 @@ and a spent grant cannot be reused for another release.
   spent its grant. There is no automatic retry. A new grant and a new release id
   are required, and the `delivery_unknown` outcome tells the caller to check
   downstream state before issuing one.
-* Revocation is checked once, inside Enforcer, immediately before the grant is spent. A
+* By default revocation is checked once, inside Enforcer, immediately before the grant is spent. A
   revocation that arrives after that check and before the callback's effect is not
-  caught. ZTS does not ask again, because that would copy Enforcer's revalidation
-  into ZTS. This is a tested known limit (`test_release_residual.py`).
+  caught (a tested known limit: `test_release_residual.py`, `test_reask_status.py`).
+  With `EnforcerReleaseGate(..., reask_status=True)` (needs Enforcer 0.1.2, which exposes its
+  verifier and status source) the status source is asked a second time inside the guarded call,
+  as the last step before delivery begins, with Enforcer's own verifier and status source. ZTS
+  does not re-implement the decision: it checks only that the answer is a status, is CURRENT,
+  names this envelope and policy, and has well-formed times. Anything else refuses delivery with
+  `GRANT_REVOKED_BEFORE_DELIVERY` (the source said revoked) or `STATUS_RECHECK_FAILED`
+  (no usable answer). The grant is already spent, so the outcome is `failed_before_delivery`,
+  and a new grant is needed. This narrows the window to one round trip; it cannot close it,
+  and it costs one more call to the status service per release.
 * Timeouts: `EnforcerReleaseGate(timeout=...)` bounds the grant provider and the whole
   Enforcer call (proof verification, status revalidation and replay consumption are
   all inside it). A call that times out before the callback starts is marked abandoned
@@ -289,12 +297,18 @@ What is and is not true about it:
 
 ## CNS compatibility
 
-The dock accepts CNS releases of the same major version at or above
+The dock accepts CNS releases of an accepted major version (`CNS_ACCEPTED_MAJORS`, now 2 and 3) at or above
 `CNS_CONTRACT_VERSION`, now `2.3.0`, which is the release `pyproject.toml` pins
 (tag `v2.3.0`, commit `41592fb7b6735abe140f745353c09ba3eed8e7a2`). Before this
 change the floor was `1.4.0` and refused major 2, so the dock refused the very
 release ZTS pins: with the real pinned CNS installed, 19 existing tests failed.
-1.x releases are now refused because nothing was verified against them. The
+1.x releases are now refused because nothing was verified against them. Major 3 was added after
+reading CNS 3.0.0's release note: its only breaking change is that `subject_digest` refuses a
+subclass of `str`, `int`, `float`, `dict`, `list` or `tuple` (a `str` Enum, for one), and plain
+values digest as before. The dock passes plain values, so an ordinary identity behaves the same
+on 2.x and 3.x; an identity that carries a subclass is refused by CNS 3.x and the release is
+denied `CNS_IDENTITY_UNTRUSTED` (`tests/test_cns_three.py`). Major 4 is refused until it is read
+the same way. The
 dock refuses anything that is not a plain `X.Y.Z` string. If CNS is unavailable,
 incompatible or cannot verify the binding, a release is denied; a locally made
 identity is never substituted.

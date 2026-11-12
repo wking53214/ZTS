@@ -113,7 +113,7 @@ GRANT SELECT, INSERT, UPDATE ON zts_trust_serial TO zts_release;
   time-stamping extended key usage. ZTS verifies the imprint, nonce, signer, usage, validity, digest and signature of
   every token, and does no chain building or revocation check. When the TSA rotates, pin the new certificate in
   addition and keep the old one while old receipts matter. ZTS was tested against OpenSSL's TSA, not a public one.
-  Test your TSA before relying on it (section 7, test 6).
+  Test your TSA before relying on it (section 7, test 6), and first run `python scripts/tsa_interop.py <url> --cert <signing-cert.pem>` from the releasing host: it stamps one head through ZTS's own client and prints PASS only if the token verifies against the certificate you pinned and the stamped time is near this host's clock.
 * **Bound the unstamped tail.** `max_unanchored_entries` (500) and `max_unanchored_age` (300 s) are the defaults. Past
   either, new releases are refused with `ANCHOR_BEHIND` until the TSA stamps again. Set the entries bound above
   what one release writes (about 11) times the releases you run at once. Tighten both if removing five minutes of
@@ -159,7 +159,8 @@ tower = DeterministicIntegrityTower(
     "ops",
     production=True,                  # refuses to start if any readiness check FAILs
     release_gate=EnforcerReleaseGate(
-        gate_enforcer, policy_version="2026-11", timeout=5.0, identity_verifier=authenticate_subject),
+        gate_enforcer, policy_version="2026-11", timeout=5.0, identity_verifier=authenticate_subject,
+        reask_status=True),           # ask the status service again just before delivery (Enforcer 0.1.2+)
     release_sink=deliver,             # the protected delivery callback
     delivery_confirmer=receiver_has,  # asks the RECEIVING side; never the sink's own return value
     hmac_key=load_secret("zts-release-signing-key"),
@@ -182,6 +183,7 @@ you can.
 | `trust_root_rollback` | PASS | A serial store, or a pinned digest (which forces a restart per rotation) |
 | `replay_store` | PASS | A reachable PostgreSQL table with both constraints. File-backed SQLite is UNKNOWN (one host only), in-memory is FAIL |
 | `replay_store_tls` | PASS | `sslmode=verify-full`. `verify-ca` and local connections are UNKNOWN |
+| `status_recheck` | PASS | `reask_status=True` on the gate, which needs Enforcer 0.1.2 or later. UNKNOWN when off: a revocation after the first status answer is then not seen |
 | `enforcer_policy` | PASS | Limits at or below 5 min lifetime, 5 s skew, 30 s status age. Looser is UNKNOWN: confirm it is intended |
 | `anchor_kind`, `anchor_backlog_bound` | PASS | A pinned TSA certificate and at least one bound |
 | `ledger_chain`, `ledger_anchor_match`, `anchor_backlog`, `trust_root_grant_keys`, `trust_root_status_keys`, `replay_store_live`, `enforcer_importable`, `cns_importable`, `accepting_work` | PASS | Live state; a FAIL here is a fault to fix now |

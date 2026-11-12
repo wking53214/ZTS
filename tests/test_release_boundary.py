@@ -322,7 +322,7 @@ def test_attack_12_cns_disappears_between_authorization_and_release(tmp_path, mo
     assert result.authorization["authorized"] is True and result.authorization["action_started"] is False
 
 
-@pytest.mark.parametrize("version", ["1.9.0", "2.2.9", "3.0.0", "2.3.0rc1", None])
+@pytest.mark.parametrize("version", ["1.9.0", "2.2.9", "4.0.0", "2.3.0rc1", None])
 def test_attack_14_incompatible_cns_version(tmp_path, mode, monkeypatch, version):
     s = build(tmp_path)
     with monkeypatch.context() as m:

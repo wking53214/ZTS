@@ -15,12 +15,20 @@ from .translation import ADAPTER_VERSION, make_unavailable_artifact, translate_i
 # accepts, not the only one. CNS adds a field only with a default in a minor
 # release and removes or renames one only in a new major release (the
 # VERSIONING note in cns/__init__.py), and validate_contract checks the
-# IdentityContext fields themselves. So any release of the same major version
+# IdentityContext fields themselves. So any release of an accepted major version
 # at or above this one is accepted, and a new major version is refused until
 # ZTS moves to it deliberately. Releases before this one are refused because
 # nothing here was verified against them; the previous floor of 1.4.0 refused
 # the very release the package pins.
+#
+# Major 3 was accepted after reading CNS 3.0.0's release note: its one breaking
+# change is that subject_digest now refuses a str, int, float, dict, list or
+# tuple SUBCLASS (a str Enum, for one). Plain values digest exactly as before.
+# The dock hands CNS plain values, so an identity whose fields are plain
+# behaves the same; an identity carrying a subclass is denied (fail closed),
+# and test_cns_three.py holds both facts.
 CNS_CONTRACT_VERSION = "2.3.0"
+CNS_ACCEPTED_MAJORS = (2, 3)
 
 
 def cns_version_supported(version: Any) -> bool:
@@ -32,7 +40,7 @@ def cns_version_supported(version: Any) -> bool:
         return False
     found = tuple(int(part) for part in version.split("."))
     floor = tuple(int(part) for part in CNS_CONTRACT_VERSION.split("."))
-    return found[0] == floor[0] and found >= floor
+    return found[0] in CNS_ACCEPTED_MAJORS and found >= floor
 
 
 class CNSDock:
@@ -60,8 +68,8 @@ class CNSDock:
         if not cns_version_supported(actual_version):
             raise CNSContractError(
                 f"incompatible CNS version: expected "
-                f"{CNS_CONTRACT_VERSION} or a later "
-                f"{CNS_CONTRACT_VERSION.split('.')[0]}.x release, got {actual_version}"
+                f"{CNS_CONTRACT_VERSION} or a later release of major version "
+                f"{' or '.join(str(m) for m in CNS_ACCEPTED_MAJORS)}, got {actual_version}"
             )
 
         self._cns = IdentityContext
@@ -189,6 +197,7 @@ class CNSDock:
 
 __all__ = [
     "ADAPTER_VERSION",
+    "CNS_ACCEPTED_MAJORS",
     "CNS_CONTRACT_VERSION",
     "CNSDock",
     "cns_version_supported",

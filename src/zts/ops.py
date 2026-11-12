@@ -30,6 +30,7 @@ LOGGER = logging.getLogger("zts.release")
 SECURITY_REASONS = frozenset({
     "GRANT_REPLAYED", "PROOF_INVALID", "SCOPE_MISMATCH", "GRANT_REVOKED", "GRANT_EXPIRED",
     "CNS_VERIFICATION_FAILED", "CNS_IDENTITY_UNTRUSTED", "ARTIFACT_CHANGED", "POLICY_CHANGED",
+    "GRANT_REVOKED_BEFORE_DELIVERY",
     "PRODUCTION_INVARIANT_VIOLATED", "AUTHORITY_CONTEXT_MISMATCH",
     # An unauthenticated subject, a grant that claims too long a life or is dated in the future, and a
     # verifier that returned something that is not claims are all things an attacker or a broken issuer does.
@@ -43,6 +44,7 @@ AVAILABILITY_REASONS = frozenset({
     # The status source answered, but not with a usable current answer. Treated as the source failing.
     "AUTHORITY_STATUS_INVALID", "AUTHORITY_STATUS_STALE", "AUTHORITY_STATUS_UNKNOWN",
     "ENFORCER_ERROR", "ENFORCER_INCOMPATIBLE", "CNS_CONTRACT_INCOMPATIBLE", "ANCHOR_BEHIND",
+    "STATUS_RECHECK_FAILED",
 })
 #: Expected outcomes and caller-side mistakes. They are counted, never alerted on by default.
 EXPECTED_REASONS = frozenset({
@@ -282,17 +284,20 @@ def _describe(gate: Any) -> dict[str, Any] | None:
 def _adapters(gate: Any) -> tuple[Any, Any, Any]:
     """The verifier, status source and replay store Enforcer was built with, or None for each it will not show.
 
-    ``Enforcer.describe()`` reports identifiers and facts, not the objects, and nothing else on Enforcer
-    returns them. ZTS needs the objects to say anything stronger than UNKNOWN about its own adapters
-    (how many usable keys a trust root holds, whether a TLS context verifies, whether a table still has its
-    constraints), and an identifier string is not enough: a custom adapter can copy one. So these three
-    reads of Enforcer's private attributes are the only ones left, kept in this one place. A missing
-    attribute gives None, and the checks then say UNKNOWN, never PASS. A supported accessor on Enforcer
-    would remove them.
+    ``Enforcer.describe()`` reports identifiers and facts, not the objects. Enforcer 0.1.2 and later
+    return them through public read-only properties, and those are used when present. Enforcer 0.1.0
+    and 0.1.1 have no such property, so for those the three private attributes are read, here and
+    nowhere else. A missing attribute gives None, and the checks then say UNKNOWN, never PASS. An
+    identifier string is not enough to PASS on: a custom adapter can copy one.
     """
     enforcer = getattr(gate, "enforcer", None)
-    return (getattr(enforcer, "_verifier", None), getattr(enforcer, "_revalidator", None),
-            getattr(enforcer, "_replay_store", None))
+
+    def first(public: Any, private: Any) -> Any:
+        return public if public is not None else private
+
+    return (first(getattr(enforcer, "verifier", None), getattr(enforcer, "_verifier", None)),
+            first(getattr(enforcer, "revalidator", None), getattr(enforcer, "_revalidator", None)),
+            first(getattr(enforcer, "replay_store", None), getattr(enforcer, "_replay_store", None)))
 
 
 def _probe_enforcer(gate: Any) -> list[Check]:
@@ -313,12 +318,27 @@ def _probe_enforcer(gate: Any) -> list[Check]:
     ]
     checks += _probe_replay_store(store, (described or {}).get("replay_store"), described is not None)
     checks.append(_probe_policy(described))
+    checks.append(_probe_reask(gate))
     verifier_hook = getattr(gate, "identity_verifier", None)
     checks.append(Check(
         "identity_authentication", UNKNOWN,
         "an identity verifier is configured; ZTS cannot verify what it does" if verifier_hook is not None
         else "no identity verifier: the grant issuer is the only authentication of the subject"))
     return checks
+
+
+def _probe_reask(gate: Any) -> Check:
+    """Whether the status source is asked again just before delivery. A setting of this very process, so it can PASS."""
+    name = "status_recheck"
+    flag = getattr(gate, "reask_status", None)
+    if flag is True:
+        return Check(name, PASS, "the status source is asked again just before delivery (the revocation window is "
+                                 "one round trip, not zero)")
+    if flag is False:
+        return Check(name, UNKNOWN, "the status source is asked once, before the grant is spent; a revocation that "
+                                    "lands before delivery is not seen (reask_status=True asks again; needs "
+                                    "Enforcer 0.1.2 or later)")
+    return Check(name, UNKNOWN, "this gate does not report whether it asks the status source a second time")
 
 
 def _probe_policy(described: dict[str, Any] | None) -> Check:

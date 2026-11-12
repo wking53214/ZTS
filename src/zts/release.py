@@ -92,6 +92,10 @@ class ReleaseReason:
     IDENTITY_NOT_AUTHENTICATED = "IDENTITY_NOT_AUTHENTICATED"
     #: The ledger anchor has fallen too far behind the ledger; no new release is attempted until it catches up.
     ANCHOR_BEHIND = "ANCHOR_BEHIND"
+    #: The status source was asked again just before delivery and said the grant is now revoked.
+    REVOKED_BEFORE_DELIVERY = "GRANT_REVOKED_BEFORE_DELIVERY"
+    #: The status source was asked again just before delivery and did not give a usable current answer.
+    STATUS_RECHECK_FAILED = "STATUS_RECHECK_FAILED"
     #: What Enforcer reports when it allows.
     ALLOWED = "VERIFIED_ACTION_BOUND_GRANT"
 
@@ -359,6 +363,7 @@ class EnforcerReleaseGate:
         dock: CNSDock | None = None,
         timeout: float | None = None,
         identity_verifier: Callable[[Any], bool] | None = None,
+        reask_status: bool = False,
     ) -> None:
         if not callable(getattr(enforcer, "execute", None)):
             raise TypeError("enforcer must provide execute(envelope, proof, action)")
@@ -383,6 +388,15 @@ class EnforcerReleaseGate:
         self.identity_verifier = identity_verifier
         if identity_verifier is not None and not callable(identity_verifier):
             raise TypeError("identity_verifier must be callable")
+        self._reask: tuple[Any, Any] | None = None
+        if reask_status:
+            verifier = getattr(enforcer, "verifier", None)
+            revalidator = getattr(enforcer, "revalidator", None)
+            if not callable(getattr(verifier, "verify_and_decode", None)) or not callable(
+                    getattr(revalidator, "revalidate", None)):
+                raise ValueError(
+                    "reask_status needs an Enforcer that exposes its verifier and status source (0.1.2 or later)")
+            self._reask = (verifier, revalidator)
         self._sealed = True
 
     @property
@@ -393,6 +407,11 @@ class EnforcerReleaseGate:
     def enforcer(self) -> Any:
         """The Enforcer this gate calls. Read-only; for deployment checks, not a way to call it."""
         return self._enforcer
+
+    @property
+    def reask_status(self) -> bool:
+        """Whether the status source is asked a second time, immediately before delivery."""
+        return self._reask is not None
 
     @property
     def dock(self) -> CNSDock:
@@ -532,6 +551,9 @@ class EnforcerReleaseGate:
                 self._check_identity(request)
             except _Deny as denial:
                 raise ReleaseAbort(denial.reason) from None
+            # The last look at revocation, as close to delivery as the code allows. It runs before the
+            # abandoned check below, so a re-ask that outlives the gate timeout cannot deliver.
+            self._reask_status_now(enforcer, envelope, proof)
             with state.lock:
                 if state.abandoned:
                     raise ReleaseAbort(ReleaseReason.ENFORCER_TIMEOUT)
@@ -607,6 +629,38 @@ class EnforcerReleaseGate:
         if "error" in box:
             raise box["error"]
         return box["value"]
+
+    def _reask_status_now(self, enforcer: Any, envelope: Any, proof: Any) -> None:
+        """Ask the status source again, just before delivery. Raises ReleaseAbort; never authorizes.
+
+        Enforcer asked once, inside ``authorize``, before it spent the grant and before the audit write
+        and the callback chain ran. A revocation that landed in between was invisible. This asks again
+        with the same verifier and status source, so the window shrinks to this one round trip. It does
+        not close it: a status can still change after this answer. The grant is already spent, so
+        a refusal here is reported as authorized, spent, nothing delivered.
+
+        Freshness of the answer is the status client's job (its challenge is echoed back); the
+        timestamps are checked here only for shape, because the status source's clock is not ours.
+        """
+        if self._reask is None:
+            return
+        verifier, revalidator = self._reask
+        try:
+            claims = verifier.verify_and_decode(proof)
+            status = revalidator.revalidate(envelope, claims)
+        except Exception:
+            raise ReleaseAbort(ReleaseReason.STATUS_RECHECK_FAILED) from None
+        if not isinstance(status, enforcer.AuthorizationStatus):
+            raise ReleaseAbort(ReleaseReason.STATUS_RECHECK_FAILED)
+        if status.status is enforcer.AuthorizationStatusValue.REVOKED:
+            raise ReleaseAbort(ReleaseReason.REVOKED_BEFORE_DELIVERY)
+        stamps = (status.checked_at, status.valid_until)
+        if (status.status is not enforcer.AuthorizationStatusValue.CURRENT
+                or status.envelope_sha256 != envelope.envelope_sha256
+                or status.policy_version != envelope.policy_version
+                or not all(isinstance(t, datetime) and t.utcoffset() is not None for t in stamps)
+                or status.valid_until < status.checked_at):
+            raise ReleaseAbort(ReleaseReason.STATUS_RECHECK_FAILED)
 
     def _check_identity(self, request: ReleaseRequest) -> None:
         """Re-derive and compare the CNS binding. Raises _Deny; never authorizes."""
