@@ -59,8 +59,9 @@ def test_the_service_may_write_only_its_own_state_and_not_the_trust_root():
 @pytest.mark.skipif(shutil.which("systemd-analyze") is None, reason="needs systemd-analyze")
 def test_systemd_accepts_the_unit_and_scores_its_exposure_low():
     verify = subprocess.run(["systemd-analyze", "verify", str(EXAMPLE / "zts-release.service")], capture_output=True, text=True)
-    complaints = [line for line in (verify.stdout + verify.stderr).splitlines() if line.strip()]
-    assert all("is not executable" in line for line in complaints), complaints  # only the placeholder program is missing
+    # systemd-analyze also reports on the machine's own units (a CI runner prints warnings about them), so look only at ours.
+    ours = [line for line in (verify.stdout + verify.stderr).splitlines() if "zts-release.service" in line]
+    assert all("is not executable" in line for line in ours), ours  # only the placeholder program is missing
     security = subprocess.run(["systemd-analyze", "security", "--offline=true", str(EXAMPLE / "zts-release.service")],
                               capture_output=True, text=True)
     match = re.search(r"exposure level for .*?: ([0-9.]+) ", security.stdout)
