@@ -219,6 +219,9 @@ directly. Isolation is a property of your deployment. Objectives to meet, and ho
   or read the replay database credentials. *Check:* the same, as the application user.
 * The tower and delivery path run under an account the application does not share.
 
+A worked set-up (accounts, directory layout, hardened systemd unit, and a script that runs these checks) is in
+`examples/isolation/`. It does not include the small service program that wraps the tower; see its README.
+
 ## 9. Acceptance tests to run in your environment
 
 None of these has been run against your deployment. Each should be run before go-live, and again after any change to

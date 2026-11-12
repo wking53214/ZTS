@@ -1,0 +1,22 @@
+{
+  "must_not_read": [
+    "/etc/zts/secrets/delivery.cred",
+    "/etc/zts/secrets/replay.dsn",
+    "/etc/zts/secrets/release-signing.key",
+    "/var/lib/zts/ledger.key"
+  ],
+  "must_not_write": [
+    "/etc/zts/trust-root.json",
+    "/var/lib/zts/ledger.jsonl",
+    "/var/lib/zts/receipts.jsonl",
+    "/var/lib/zts/ledger.key",
+    "/etc/zts/secrets/release-signing.key"
+  ],
+  "must_not_write_in": [
+    "/etc/zts",
+    "/var/lib/zts"
+  ],
+  "must_not_connect": [
+    "RECEIVER_HOST:443"
+  ]
+}

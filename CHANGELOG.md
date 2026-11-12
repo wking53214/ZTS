@@ -5,6 +5,14 @@
 ### Deployment support (ninth pass)
 
 Added:
+- `examples/isolation/`: a separate release service on its own account. `setup_accounts.sh` builds the accounts and the layout
+  (trust root root-owned so a compromised service cannot rewrite who it trusts; secrets and state 700 and service-owned);
+  `zts-release.service` is a hardened systemd unit (offline exposure score 1.1, "OK"); `check_isolation.py` is acceptance
+  test 14 (run as the application, nothing may succeed; run as the service with `--expect-access` as a control so a typo is not
+  a pass; a missing path is an ERROR; running as root is refused). `tests/test_isolation_example.py` builds the layout and runs
+  the check as real `nobody` and `daemon` accounts, loosens permissions five ways and finds exactly those, and checks the
+  check changes nothing; six mutations fail it. NOT provided: the release service program itself (its request format is a design
+  decision). The unit has not been started under a real systemd.
 - `docs/TRUST_ROOT_PROCEDURE.md` and `examples/trust_root_repo/`: the two-person trust-root review as a procedure (roles, an ordinary
   change, a rotation order, an emergency revocation path, deployment and confirmation, routine checks, what it does not protect
   against) and a ready set-up for a separate repository: a workflow that runs `scripts/trust_root_review.py` on every pull

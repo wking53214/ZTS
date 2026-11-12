@@ -1,0 +1,64 @@
+# The release service: the ONLY process that holds the delivery credentials, the keys and the ledger.
+# Install as /etc/systemd/system/zts-release.service, then `systemctl daemon-reload && systemctl enable --now zts-release`.
+#
+# The program in ExecStart is yours: ZTS is a library, and the thin service that wraps your tower and answers the
+# application's requests is deliberately not part of it (examples/isolation/README.md says why and what it must do).
+# Everything below is about what that process may touch, whatever it runs.
+[Unit]
+Description=ZTS release service (tower, delivery path, ledger, keys)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zts-release
+Group=zts-release
+ExecStart=/opt/zts/venv/bin/python -m release_service
+Restart=on-failure
+RestartSec=2s
+
+# --- files: it may write only its own state, and read its own configuration -----------------------------------
+# The trust root is root-owned and read-only to it on purpose: a compromised service cannot rewrite who it trusts.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/zts
+ReadOnlyPaths=/etc/zts
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+UMask=0077
+StateDirectory=zts
+StateDirectoryMode=0700
+
+# --- privileges ------------------------------------------------------------------------------------------------
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RemoveIPC=true
+
+# --- kernel and namespaces -------------------------------------------------------------------------------------
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+# --- network ---------------------------------------------------------------------------------------------------
+# It talks to: the status service, the replay database, the timestamp authority, the receipt destination, the
+# receiver, and the application over a local socket. Name them. The example denies everything and then allows
+# nothing, which is wrong for a real host: replace the two lines with your own addresses before you enable it.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+# IPAddressAllow=10.0.1.10 10.0.1.11 10.0.2.0/24
+
+[Install]
+WantedBy=multi-user.target
