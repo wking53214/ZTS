@@ -136,7 +136,7 @@ contract layer. It supplies the identity shape and `subject_digest`. ZTS uses on
 nothing: a valid digest proves an identity is the one named, not that it may receive anything.
 The dock accepts CNS 2.x at or above 2.3.0 and refuses anything else.
 
-**Enforcer** (pinned to commit `b2ee452` (0.1.1), accepted as `0.1.x`) is the authorization authority. Its
+**Enforcer** (pinned to commit `e4d5688` (0.1.2), accepted as `0.1.x`) is the authorization authority. Its
 `execute(envelope, proof, callback)` verifies the proof through a verifier you supply, checks the
 grant is bound to the exact envelope, current and within its lifetime, asks your status source for
 current authorization, consumes the grant atomically, and only then runs the callback. Its defaults

@@ -88,6 +88,7 @@ jobs:
         env:
           ZTS_REQUIRE_CNS: "1"
           ZTS_REQUIRE_ENFORCER: "1"
+          ZTS_REQUIRE_ENFORCER_012: "1"
         run: python -m pytest tests/ -q -rs
 
   production-stack:
@@ -122,6 +123,7 @@ jobs:
           ZTS_REQUIRE_POSTGRES: "1"
           ZTS_REQUIRE_TSA: "1"
           ZTS_REQUIRE_ENFORCER_011: "1"
+          ZTS_REQUIRE_ENFORCER_012: "1"
         run: python -m pytest tests/ -q -rs
 
   cns-3:
@@ -151,4 +153,5 @@ jobs:
           ZTS_REQUIRE_POSTGRES: "1"
           ZTS_REQUIRE_TSA: "1"
           ZTS_REQUIRE_ENFORCER_011: "1"
+          ZTS_REQUIRE_ENFORCER_012: "1"
         run: python -m pytest tests/ -q -rs

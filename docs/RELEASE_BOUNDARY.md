@@ -315,7 +315,7 @@ identity is never substituted.
 
 Enforcer is accepted on `0.1.x` only, because it is a 0.x prototype whose minor
 releases may break. It is pinned in `pyproject.toml` to commit
-`b2ee45220e4b92932b93b5ee2c2a0f159541d86a`.
+`e4d5688e1564d91ded7d5337e93c0b734375d073` (0.1.2, Enforcer PR #9).
 
 ## Development and test bypasses
 

@@ -52,7 +52,10 @@ Nothing here is deployment-verified. Every component was tested against an indep
 (a separate encoder for the issuer and status service, a real PostgreSQL server, OpenSSL's RFC 3161 TSA),
 and each of those is a fixture, not evidence about a real issuer, authority or TSA.
 
-## Changes made to a dependency (Enforcer 0.1.1, merged and pinned)
+## Changes made to a dependency (Enforcer 0.1.1 and 0.1.2, merged and pinned)
+
+Enforcer 0.1.2 (PR #9, commit `e4d5688`, which ZTS now pins) adds the read-only `verifier`, `revalidator` and `replay_store`
+properties. ZTS uses them for readiness and for the status re-ask (`reask_status=True`). The 0.1.1 changes follow.
 
 Authorized, additive and backward compatible; merged to Enforcer `main` as PR #7 (commit `b2ee452`), which ZTS now pins:
 

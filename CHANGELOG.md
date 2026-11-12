@@ -4,6 +4,10 @@
 
 ### Open items closed (eighth pass)
 
+Changed:
+- Pins Enforcer to 0.1.2 (`e4d5688`, Enforcer PR #9); CI sets `ZTS_REQUIRE_ENFORCER_012=1` in the `enforcer`, `production-stack`
+  and `cns-3` jobs, so the re-ask and accessor tests cannot silently skip there.
+
 Added:
 - `EnforcerReleaseGate(..., reask_status=True)`: asks the status source a second time inside the guarded call, as the
   last step before delivery begins, using Enforcer's own verifier and status source (Enforcer 0.1.2 and later; the
