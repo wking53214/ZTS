@@ -23,7 +23,7 @@ dependencies = []
 [project.optional-dependencies]
 dev = ["pytest>=7.4"]
 # Optional: the CNS dock (zts.cns). Nothing else in ZTS imports CNS, and ZTS runs without it.
-cns = ["cns @ git+https://github.com/wking53214/CNS.git@v2.3.0"]
+cns = ["cns @ git+https://github.com/wking53214/CNS.git@v3.0.0"]
 # Optional: the Enforcer release adapter (zts.release). Pinned to a commit because
 # Enforcer publishes no tags and is a 0.1.0 prototype. Needs the cns extra as well.
 enforcer = ["tack-enforcer @ git+https://github.com/wking53214/Enforcer.git@e4d5688e1564d91ded7d5337e93c0b734375d073"]
@@ -34,7 +34,7 @@ replay-postgres = ["psycopg[binary]>=3.1"]
 # Optional: zts.anchor_tsa, the RFC 3161 ledger anchor.
 tsa = ["cryptography>=42", "asn1crypto>=1.5"]
 # Everything a production deployment of the Enforcer path uses.
-production = ["cryptography>=42", "asn1crypto>=1.5", "psycopg[binary]>=3.1", "cns @ git+https://github.com/wking53214/CNS.git@v2.3.0", "tack-enforcer @ git+https://github.com/wking53214/Enforcer.git@e4d5688e1564d91ded7d5337e93c0b734375d073"]
+production = ["cryptography>=42", "asn1crypto>=1.5", "psycopg[binary]>=3.1", "cns @ git+https://github.com/wking53214/CNS.git@v3.0.0", "tack-enforcer @ git+https://github.com/wking53214/Enforcer.git@e4d5688e1564d91ded7d5337e93c0b734375d073"]
 
 [project.scripts]
 zts = "zts.cli:main"
