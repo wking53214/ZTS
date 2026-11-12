@@ -5,6 +5,16 @@
 ### Deployment support (ninth pass)
 
 Added:
+- `zts.identity.Ed25519IdentityVerifier` (deployment step 6): a ready `identity_verifier` hook. The identity provider signs the
+  identity's fields (tenant, subject, roles, trust level, authentication method, `verified`), an audience and a validity window
+  with its own Ed25519 key; the result travels in the `signature` field of the CNS `IdentityContext`. The hook returns True only
+  if the key is a current `identity`-role key in the trust root, the signature covers exactly these fields, the audience is
+  ours, the window is current and no longer than 300 s, and `verified` is true. It never raises. New trust-root role
+  `identity`; a key of another role is refused and an identity key cannot verify grants. Readiness: `identity_authentication`
+  is PASS for this verifier with a usable key (FAIL with none, UNKNOWN for any other hook), and a live `trust_root_identity_keys`
+  check. `examples/identity_provider/` has a reference signer that depends only on `cryptography` (checked against the
+  verifier) and the identity provider's checklist. `tests/test_identity_auth.py` (78 tests, including through the real release
+  gate, checked again just before delivery); nine mutations fail it. NOT done: connecting a real identity provider.
 - `examples/isolation/`: a separate release service on its own account. `setup_accounts.sh` builds the accounts and the layout
   (trust root root-owned so a compromised service cannot rewrite who it trusts; secrets and state 700 and service-owned);
   `zts-release.service` is a hardened systemd unit (offline exposure score 1.1, "OK"); `check_isolation.py` is acceptance

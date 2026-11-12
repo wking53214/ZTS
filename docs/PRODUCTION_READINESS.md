@@ -29,6 +29,7 @@ review could observe.
 | Shared PostgreSQL replay store; safe pruning; refuses a table that lost a constraint | `zts.replay_postgres` | `tests/test_replay_postgres.py` (a real PostgreSQL server; threads, processes, two hosts) |
 | RFC 3161 ledger anchor; lazy publishing; every token re-verified | `zts.anchor_tsa` | `tests/test_anchor_tsa.py` (tokens issued by OpenSSL) |
 | Optional identity-authentication hook, checked twice, fail closed | `EnforcerReleaseGate(identity_verifier=)` | `tests/test_identity_hook.py` |
+| A ready identity hook: identity-provider Ed25519 signature over the identity, audience and short window | `zts.identity.Ed25519IdentityVerifier` | `tests/test_identity_auth.py` |
 | The whole stack assembled and attacked | all of the above | `tests/test_production_assembly.py` |
 
 Each guard above was mutation-tested: the code was deliberately broken and the suite had to fail. Three

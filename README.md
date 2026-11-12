@@ -201,7 +201,8 @@ chosen explicitly, performs no authorization, and is refused by `require_enforce
 * **Identity.** ZTS binds a release to the CNS digest of the identity it is given. It does not
   authenticate that identity: the grant issuer authenticates the subject before signing, and an optional
   `identity_verifier` hook on the gate lets you add your own check, run before Enforcer is asked and again
-  just before delivery, failing closed. With no hook, the issuer is the only authentication.
+  just before delivery, failing closed. `zts.identity.Ed25519IdentityVerifier` is a ready hook that checks your identity
+  provider's signature (see `examples/identity_provider/`). With no hook, the issuer is the only authentication.
 
 ## The audit ledger
 

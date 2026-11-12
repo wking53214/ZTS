@@ -35,7 +35,7 @@ ZTS enforces and records. It does not issue grants, run a status service, host a
 ## 2. Trust root and keys
 
 * Generate the issuer's keys where the issuer lives. ZTS holds public keys only and contains no signing code. Use
-  **separate keys for the `grant` role and the `status` role** (the same key cannot hold both).
+  **separate keys for the `grant` role, the `status` role and, if you check identities, the `identity` role** (a key holds one role).
 * A key id is `ed25519-` plus the first 16 hex characters of the SHA-256 of the raw public key (`zts.trust.key_id`).
 * The trust root file lists each key with its issuer, role, validity window and status. Raise `serial` on every edit.
 * **Permissions.** The file is a regular file of at most 1 MiB, owned by the service user or root, mode 644 or
@@ -63,6 +63,11 @@ ZTS checks what an issuer produces; it does not run one. What your issuer must g
 * The grant's lifetime is within Enforcer's limit (5 minutes by default) and its nonce is unique per grant.
 * The status service answers `CURRENT`, `REVOKED` or `UNKNOWN`, echoing the challenge, envelope digest, policy
   version, issuer and nonce, with `checked_at` and `valid_until` no more than 30 seconds apart.
+* **Identity.** To have ZTS check that the caller really is the subject, your identity provider signs the identity (tenant,
+  subject, roles, trust level, authentication method) with its own Ed25519 key and puts the result in `IdentityContext.signature`.
+  The key goes in the trust root with role `identity`, separate from the grant and status keys. The format, the ordering rule
+  (sign the identity, then request the grant for that exact identity) and a reference signer are in
+  `examples/identity_provider/`. Without this the grant issuer is the only authentication of the subject.
 * **Revocation is not instant.** A grant revoked after the status answer and before delivery starts still
   delivers. The window is the replay-database round trip plus a few local steps, bounded by the gate `timeout`
   (measured at 0 to 2.5 s in the audit probe). State this to whoever depends on revocation.
@@ -153,6 +158,7 @@ from zts.ledger import ValLedger, load_or_create_ledger_key
 from zts.ledger_store import FileLedgerStore
 from zts.replay_postgres import PostgresReplayStore, PostgresSerialStore
 from zts.status import HttpStatusRevalidator
+from zts.identity import Ed25519IdentityVerifier
 from zts.trust import Ed25519GrantVerifier, FileTrustRoot
 
 DSN = "host=db.internal dbname=zts user=zts_release sslmode=verify-full sslrootcert=/etc/zts/db-ca.pem"
@@ -173,7 +179,7 @@ tower = DeterministicIntegrityTower(
     "ops",
     production=True,                  # refuses to start if any readiness check FAILs
     release_gate=EnforcerReleaseGate(
-        gate_enforcer, policy_version="2026-11", timeout=5.0, identity_verifier=authenticate_subject,
+        gate_enforcer, policy_version="2026-11", timeout=5.0, identity_verifier=Ed25519IdentityVerifier(trust, audience="zts-release/prod"),
         reask_status=True),           # ask the status service again just before delivery (Enforcer 0.1.2+)
     release_sink=deliver,             # the protected delivery callback
     delivery_confirmer=receiver_has,  # asks the RECEIVING side; never the sink's own return value
@@ -200,10 +206,10 @@ you can.
 | `status_recheck` | PASS | `reask_status=True` on the gate, which needs Enforcer 0.1.2 or later. UNKNOWN when off: a revocation after the first status answer is then not seen |
 | `enforcer_policy` | PASS | Limits at or below 5 min lifetime, 5 s skew, 30 s status age. Looser is UNKNOWN: confirm it is intended |
 | `anchor_kind`, `anchor_backlog_bound` | PASS | A pinned TSA certificate and at least one bound |
-| `ledger_chain`, `ledger_anchor_match`, `anchor_backlog`, `trust_root_grant_keys`, `trust_root_status_keys`, `replay_store_live`, `enforcer_importable`, `cns_importable`, `accepting_work` | PASS | Live state; a FAIL here is a fault to fix now |
+| `ledger_chain`, `ledger_anchor_match`, `anchor_backlog`, `trust_root_grant_keys`, `trust_root_status_keys`, `trust_root_identity_keys`, `replay_store_live`, `enforcer_importable`, `cns_importable`, `accepting_work` | PASS | Live state; a FAIL here is a fault to fix now |
 | `anchor_service` | PASS after the first release | Release once; UNKNOWN until the TSA has answered |
 | `trust_root_governance` | UNKNOWN always | A named owner, an edit procedure, a distribution procedure |
-| `identity_authentication` | UNKNOWN always | An authenticator hook you have reviewed, or accept the issuer as the only authentication |
+| `identity_authentication` | PASS with `Ed25519IdentityVerifier` and a usable `identity` key | PASS says ZTS can verify your identity provider's signatures, not that it authenticates people well. UNKNOWN with a custom hook (ZTS cannot see inside it) or none (the issuer is then the only authentication). FAIL if the trust root has no usable `identity` key |
 | `receipt_export` | UNKNOWN always | An `on_receipt` destination you have confirmed is out of the writer's reach |
 | `anchor_independence` | UNKNOWN always | The same confirmation about the receipts |
 

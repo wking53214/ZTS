@@ -289,7 +289,9 @@ What is and is not true about it:
 * **Replay** (`zts.replay_postgres`): one atomic insert over two unique constraints; any database error is a
   denial; `production=True` refuses a table that lost either constraint.
 * **Identity** (`identity_verifier` on the gate): optional, exact-`True` only, bounded by the gate timeout, run
-  before Enforcer is asked and again just before delivery.
+  before Enforcer is asked and again just before delivery. `zts.identity.Ed25519IdentityVerifier` is a ready one: it checks an
+  identity provider's Ed25519 signature (key role `identity` in the trust root) over the identity's fields, an audience and a short
+  validity window, carried in `IdentityContext.signature`. A signed identity is a bearer credential until it expires.
 * **Production validation** reports PASS only for ZTS's own implementations, and only for what ZTS verified
   about them (for example, the trust root loads and holds a usable key of the right role). Trust-root
   governance, anchor independence, identity authentication, TLS to a local database and any custom adapter

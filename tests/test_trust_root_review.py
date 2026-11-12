@@ -130,3 +130,13 @@ def test_the_same_key_id_under_another_role_or_issuer_fails_the_review(tmp_path,
     new = write(tmp_path / "new.json", [changed, s.entry(CLOCK)], serial=2)
     code, out = run(capsys, new, "--previous", old)
     assert code == 1 and "changed its role, issuer or key" in out
+
+
+def test_an_identity_role_key_is_shown_and_accepted_by_the_review(tmp_path, keys, capsys):
+    g, s = keys
+    idp = IssuerKey("idp", "identity")
+    p = write(tmp_path / "new.json", [g.entry(CLOCK), s.entry(CLOCK), idp.entry(CLOCK)], serial=1)
+    _, out = run(capsys, p)
+    assert idp.kid in out and "identity" in out
+    _, problems, _ = tool.review(p, None, CLOCK(), 30)
+    assert problems == []

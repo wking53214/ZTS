@@ -319,12 +319,28 @@ def _probe_enforcer(gate: Any) -> list[Check]:
     checks += _probe_replay_store(store, (described or {}).get("replay_store"), described is not None)
     checks.append(_probe_policy(described))
     checks.append(_probe_reask(gate))
-    verifier_hook = getattr(gate, "identity_verifier", None)
-    checks.append(Check(
-        "identity_authentication", UNKNOWN,
-        "an identity verifier is configured; ZTS cannot verify what it does" if verifier_hook is not None
-        else "no identity verifier: the grant issuer is the only authentication of the subject"))
+    checks.append(_probe_identity(getattr(gate, "identity_verifier", None)))
     return checks
+
+
+def _probe_identity(hook: Any) -> Check:
+    """ZTS's own identity verifier can PASS for what this process sees (a usable ``identity`` key). Anything else stays UNKNOWN."""
+    name = "identity_authentication"
+    from .identity import Ed25519IdentityVerifier
+    from .trust import TrustRootError
+
+    if hook is None:
+        return Check(name, UNKNOWN, "no identity verifier: the grant issuer is the only authentication of the subject")
+    if isinstance(hook, Ed25519IdentityVerifier):
+        try:
+            usable = _usable_keys(hook.trust, "identity")
+        except TrustRootError as exc:
+            return Check(name, FAIL, f"the trust root cannot be loaded: {exc}")
+        if usable == 0:
+            return Check(name, FAIL, "the trust root has no usable identity key: every identity will be refused")
+        return Check(name, PASS, f"ZTS identity verifier for audience {hook.audience!r}, {usable} usable identity key(s). "
+                                 "Whether the identity provider authenticates people properly is not something this can check")
+    return Check(name, UNKNOWN, "an identity verifier is configured; ZTS cannot verify what it does")
 
 
 def _probe_reask(gate: Any) -> Check:
@@ -516,6 +532,7 @@ def _runtime_adapters(gate: Any) -> list[Check]:
     constraint, shows up as degraded instead of staying "ok" until the next release is refused."""
     verifier, revalidator, store = _adapters(gate)
     out: list[Check] = []
+    from .identity import Ed25519IdentityVerifier
     from .replay_postgres import PostgresReplayStore
     from .status import HttpStatusRevalidator
     from .trust import Ed25519GrantVerifier, TrustRootError
@@ -530,6 +547,15 @@ def _runtime_adapters(gate: Any) -> list[Check]:
                 continue
             out.append(_verdict(usable > 0, name, f"{usable} usable {role} key(s)",
                                 f"no usable {role} key: every proof or status answer will be refused"))
+    hook = getattr(gate, "identity_verifier", None)
+    if isinstance(hook, Ed25519IdentityVerifier):
+        try:
+            usable = _usable_keys(hook.trust, "identity")
+        except TrustRootError as exc:
+            out.append(Check("trust_root_identity_keys", FAIL, f"the trust root cannot be loaded: {exc}"))
+        else:
+            out.append(_verdict(usable > 0, "trust_root_identity_keys", f"{usable} usable identity key(s)",
+                                "no usable identity key: every identity will be refused"))
     if isinstance(store, PostgresReplayStore):
         out.append(_verdict(store.health(), "replay_store_live",
                             "the replay database answers and both uniqueness constraints are in place",
