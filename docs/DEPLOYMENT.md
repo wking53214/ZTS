@@ -133,6 +133,8 @@ GRANT SELECT, INSERT, UPDATE ON zts_trust_serial TO zts_release;
   stopping at the first failure so there is no gap. It cannot create the separation that makes the copy worth having: the
   destination must be append-only for this host, must treat a repeated `sequence` as the same receipt, and should refuse a
   different receipt for a sequence it already holds.
+  A reference receiver for a locked AWS S3 bucket (Object Lock), with its IAM policy, setup and a trial checklist, is in
+  `examples/receipt_receiver/`; its S3 code has only been tested against a stand-in client.
 * **Ledger and keys.** The ledger is a local file on a filesystem that honors `fsync` and `flock` (not a network
   share), one per host. The ledger key is a 32-byte secret in a file with mode 600 that you create before first start
   (`load_or_create_ledger_key` creates a missing file, so check it exists). The release signature key (32 bytes) comes
@@ -237,6 +239,8 @@ the issuer, the status service, the TSA or the database. Record the date and res
 | 12 | Restore an old ledger and its receipts together | Detected only if your off-box receipts are newer | Compare with the custody copy |
 | 13 | Fail the receipt export destination | `receipt_export_live` in `health()`; release still delivers | `health()` |
 | 14 | Try section 8's checks as the application user | Every one fails | Your own evidence |
+
+Fill in [ACCEPTANCE_RECORD.md](ACCEPTANCE_RECORD.md) as you go: it has a section per test below, with places for what you saw, what you measured and who signed off.
 
 ### What this repository already proves, and what only you can
 
