@@ -240,6 +240,8 @@ the issuer, the status service, the TSA or the database. Record the date and res
 | 13 | Fail the receipt export destination | `receipt_export_live` in `health()`; release still delivers | `health()` |
 | 14 | Try section 8's checks as the application user | Every one fails | Your own evidence |
 
+Fill in [ACCEPTANCE_RECORD.md](ACCEPTANCE_RECORD.md) as you go: it has a section per test below, with places for what you saw, what you measured and who signed off.
+
 ### What this repository already proves, and what only you can
 
 Each row's mechanism is exercised against stand-ins in the files named (a real PostgreSQL, OpenSSL's TSA, a killed process).

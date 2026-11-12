@@ -173,3 +173,15 @@ def test_every_script_the_guide_names_exists():
     assert {"tsa_interop.py", "trust_root_review.py"} <= named
     root = Path(__file__).resolve().parents[1] / "scripts"
     assert [n for n in sorted(named) if not (root / n).exists()] == []
+
+
+def test_the_acceptance_record_has_a_section_for_every_acceptance_test_in_the_guide():
+    """docs/ACCEPTANCE_RECORD.md must stay in step with section 9: one section per row, in order, with the same subject."""
+    record = (Path(__file__).resolve().parents[1] / "docs" / "ACCEPTANCE_RECORD.md").read_text(encoding="utf-8")
+    rows = re.findall(r"^\| (\d+) \| (.+?) \| .+? \| .+? \|$", TEXT.split("## 9. Acceptance tests")[1].split("###")[0], re.M)
+    assert [int(n) for n, _ in rows] == list(range(1, 15))
+    sections = re.findall(r"^### (\d+)\. ", record, re.M)
+    assert [int(n) for n in sections] == list(range(1, 15))
+    for number in range(1, 15):
+        body = record.split(f"### {number}. ")[1].split("\n---")[0].split("\n### ")[0]
+        assert all(marker in body for marker in ("**Do:**", "**Expect:**", "**Saw:**", "[ ] Pass"))

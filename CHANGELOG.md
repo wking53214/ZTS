@@ -10,6 +10,8 @@ Added:
   is accepted, a different one for a stored sequence is refused 409, and with a pinned authority certificate a receipt whose
   token does not verify is refused 422. `tests/test_receipt_receiver.py` (38 tests, including the real exporter over TLS and
   real tokens from OpenSSL's authority); seven mutations fail it. The S3 calls ran only against a stand-in client.
+- `docs/ACCEPTANCE_RECORD.md`: a fill-in record for the 14 acceptance tests (what to do, what is expected, what to measure, what
+  evidence to attach, pass or fail, initials, sign-off). A guide test keeps it to exactly the guide's 14 tests, in order.
 - `zts.receipts.HttpsReceiptExporter`: a ready `on_receipt` hook (bounded HTTPS POST, URL never in an error) with `resend()`
   that fills an outage without leaving a gap. `tests/test_receipt_export.py` runs it against a local TLS receiver; three
   mutations (swallowing errors in resend, an off-by-one on the sequence, accepting http) each fail it. It cannot supply the
