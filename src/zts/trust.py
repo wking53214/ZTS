@@ -53,6 +53,7 @@ GRANT_TYPE = "zts-grant-1"
 ALGORITHM = "Ed25519"
 ROLE_GRANT = "grant"
 ROLE_STATUS = "status"
+ROLE_IDENTITY = "identity"
 MAX_PROOF_BYTES = 8192
 #: A trust root is a short list of keys. Anything bigger is refused rather than read into memory.
 MAX_TRUST_BYTES = 1 << 20
@@ -165,7 +166,7 @@ class TrustRoot:
 
         {"version": 1,
          "serial": 7,                       (optional; required when a serial store is used)
-         "keys": [{"kid": "ed25519-...", "issuer_id": "...", "role": "grant" | "status",
+         "keys": [{"kid": "ed25519-...", "issuer_id": "...", "role": "grant" | "status" | "identity",
                    "public_key": "<b64u raw 32 bytes>", "not_before": "...", "not_after": "...",
                    "status": "active" | "revoked"}]}
 
@@ -205,7 +206,7 @@ class TrustRoot:
             raw = b64u_decode(entry["public_key"]) if isinstance(entry["public_key"], str) else b""
             issuer = entry["issuer_id"]
             if (len(raw) != 32 or entry["kid"] != key_id(raw) or entry["kid"] in keys
-                    or entry["role"] not in (ROLE_GRANT, ROLE_STATUS)
+                    or entry["role"] not in (ROLE_GRANT, ROLE_STATUS, ROLE_IDENTITY)
                     or entry["status"] not in ("active", "revoked")
                     or not isinstance(issuer, str) or not issuer.strip()):
                 raise Rejected("key")
@@ -616,7 +617,7 @@ def _enforcer_or_raise() -> Any:
 
 __all__ = [
     "ALGORITHM", "Ed25519GrantVerifier", "FileTrustRoot", "GRANT_TYPE", "Rejected", "ROLE_GRANT",
-    "ROLE_STATUS", "TrustRoot", "TrustRootError", "TrustedKey", "b64u_decode", "b64u_encode",
+    "ROLE_IDENTITY", "ROLE_STATUS", "TrustRoot", "TrustRootError", "TrustedKey", "b64u_decode", "b64u_encode",
     "key_id", "lookup_key", "parse_time", "read_header", "split_signed", "strict_json",
     "verify_signature",
 ]
