@@ -44,7 +44,8 @@ ZTS enforces and records. It does not issue grants, run a status service, host a
   `/tmp` is accepted but is a poor home for it.
 * **Rollback protection.** Give `FileTrustRoot` a `PostgresSerialStore` (the replay database is the natural home) so
   an older copy of the file is refused. Without it readiness reports `trust_root_rollback` UNKNOWN.
-* **Edit procedure.** One person prepares the new file. A second person runs
+* **Edit procedure.** The full process (roles, ordinary change, rotation order, emergency revocation, deployment) is in
+  [TRUST_ROOT_PROCEDURE.md](TRUST_ROOT_PROCEDURE.md), with a ready review set-up in `examples/trust_root_repo/`. In short: one person prepares the new file. A second person runs
   `python scripts/trust_root_review.py NEW.json --previous LIVE.json` and signs off on its output: it applies ZTS's own
   parser, prints every key with its role, issuer, window and state, prints the SHA-256 to pin, and fails the review if the
   serial does not rise, a revoked key becomes active again, or a key id changes role or issuer. It cannot judge whether the keys

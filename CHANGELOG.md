@@ -5,6 +5,14 @@
 ### Deployment support (ninth pass)
 
 Added:
+- `docs/TRUST_ROOT_PROCEDURE.md` and `examples/trust_root_repo/`: the two-person trust-root review as a procedure (roles, an ordinary
+  change, a rotation order, an emergency revocation path, deployment and confirmation, routine checks, what it does not protect
+  against) and a ready set-up for a separate repository: a workflow that runs `scripts/trust_root_review.py` on every pull
+  request against the file live on the base branch and posts the result, a code-owner list that also covers the workflow, and a
+  branch-protection checklist. `tests/test_trust_root_repo_example.py` runs the workflow's own review script against real git
+  histories (good edit, un-revoke, serial not raised, broken file, first version, workflow-only change) and holds properties of the
+  file (pull_request not pull_request_target, read-only permissions, actions pinned to commits, no event value in a shell command);
+  five mutations fail it. The workflow itself has not run on GitHub.
 - `examples/receipt_receiver/`: a reference receiver for a locked AWS S3 bucket (Object Lock, write-if-absent, COMPLIANCE or
   GOVERNANCE mode), with a Lambda entry point, least-privilege IAM, a trial checklist and what to alarm on. A repeated receipt
   is accepted, a different one for a stored sequence is refused 409, and with a pinned authority certificate a receipt whose
