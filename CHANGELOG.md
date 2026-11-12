@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Open items closed (eighth pass)
+
+Added:
+- `EnforcerReleaseGate(..., reask_status=True)`: asks the status source a second time inside the guarded call, as the
+  last step before delivery begins, using Enforcer's own verifier and status source (Enforcer 0.1.2 and later; the
+  constructor raises `ValueError` on an Enforcer that does not expose them). A status that is revoked refuses delivery
+  with `GRANT_REVOKED_BEFORE_DELIVERY`; no usable answer is `STATUS_RECHECK_FAILED`. Both are `failed_before_delivery`
+  (the grant is spent). It narrows the revocation window to one round trip and does not close it. A re-ask that
+  outlives the gate timeout cannot deliver. Off by default; behaviour without it is unchanged. Tests:
+  `tests/test_reask_status.py`; each mutation of the new code (no call, revoked ignored, binding ignored, call after
+  the abandoned check) fails it.
+- `scripts/tsa_interop.py` (tested against OpenSSL's TSA in `tests/test_tsa_interop_script.py`): stamps one head with
+  a real authority through ZTS's own client and verifies it against the certificate you pin. Not run against a public
+  authority: this sandbox cannot reach one, so that run is yours.
+- Readiness check `status_recheck` (PASS when on, UNKNOWN when off). Both new reasons are classified in `ops`.
+- The dock accepts CNS major 3 (`CNS_ACCEPTED_MAJORS = (2, 3)`), after reading CNS 3.0.0's release note: its only
+  breaking change is that `subject_digest` refuses a subclass of `str`, `int`, `float`, `dict`, `list` or `tuple`.
+  Executed: the whole suite against CNS 3.0.0 passes apart from the tests that asserted 3.x was refused. An identity
+  carrying such a subclass is denied `CNS_IDENTITY_UNTRUSTED` (`tests/test_cns_three.py`). Major 4 stays refused.
+  `pyproject.toml` still pins CNS 2.3.0; a CI job runs the suite against 3.0.0.
+
+Changed:
+- Readiness reads the verifier, status source and replay store through Enforcer 0.1.2's public properties when they
+  exist, and falls back to the private attributes (in the one documented helper) for 0.1.0 and 0.1.1.
+- Existing tests edited, each because the change above alters exactly what they assert: `test_cns_version_rule.py`
+  (3.x accepted, 4.x refused, instead of 3.x refused), `test_release_boundary.py::test_attack_14_incompatible_cns_version`
+  (the refused example is 4.0.0, not 3.0.0). The CNS error message now names the accepted majors.
+- Test helper `release_kit.build` takes `reask_status`.
+
 ### Crash drill (seventh pass)
 
 Added:

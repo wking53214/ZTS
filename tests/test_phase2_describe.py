@@ -231,3 +231,38 @@ def test_a_description_that_is_not_a_mapping_is_treated_as_no_description():
             return "nonsense"
 
     assert _describe(EnforcerReleaseGate(Odd(), policy_version="p1", timeout=2.0)) is None
+
+
+# ------------------------------------------- the public accessors are preferred when Enforcer has them
+
+
+def test_the_public_adapters_are_preferred_and_the_private_ones_are_the_fallback():
+    from zts.ops import _adapters
+
+    class Both:
+        verifier, revalidator, replay_store = "pub-v", "pub-r", "pub-s"
+        _verifier, _revalidator, _replay_store = "priv-v", "priv-r", "priv-s"
+
+    class OldEnforcer:
+        _verifier, _revalidator, _replay_store = "priv-v", "priv-r", "priv-s"
+
+    class Nothing:
+        pass
+
+    def gate(e):
+        return type("G", (), {"enforcer": e})()
+
+    assert _adapters(gate(Both())) == ("pub-v", "pub-r", "pub-s")
+    assert _adapters(gate(OldEnforcer())) == ("priv-v", "priv-r", "priv-s")
+    assert _adapters(gate(Nothing())) == (None, None, None)
+    assert _adapters(object()) == (None, None, None)
+
+
+@needs_describe
+def test_a_real_enforcer_gives_the_same_objects_either_way():
+    from zts.ops import _adapters
+
+    store = enforcer.SQLiteReplayStore()
+    gate = gate_for(store=store)
+    verifier, revalidator, found_store = _adapters(gate)
+    assert found_store is store and verifier is gate.enforcer._verifier and revalidator is gate.enforcer._revalidator

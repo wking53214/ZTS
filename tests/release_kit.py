@@ -278,6 +278,7 @@ def build(
     confirmer: Any = "default",
     gate_timeout: float | None = None,
     identity_verifier: Callable[[Any], bool] | None = None,
+    reask_status: bool = False,
     **tower_options: Any,
 ) -> Stack:
     clock = clock or Clock()
@@ -300,7 +301,7 @@ def build(
         hmac_key=b"k" * 32,
         persist_ledger_key=False,
         release_gate=EnforcerReleaseGate(gate_enforcer, policy_version=policy, timeout=gate_timeout,
-                                      identity_verifier=identity_verifier),
+                                      identity_verifier=identity_verifier, reask_status=reask_status),
         require_enforcer=True,
         release_sink=sink or recorder,
         delivery_confirmer=default_confirmer if confirmer == "default" else confirmer,
