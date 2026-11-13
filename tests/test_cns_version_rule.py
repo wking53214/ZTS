@@ -50,7 +50,7 @@ def test_every_release_of_an_accepted_major_at_or_above_the_floor_is_accepted(ve
     assert cns_version_supported(version)
 
 
-@pytest.mark.parametrize("version", ["1.9.0", "1.4.0", "1.3.9", "0.9.0", "2.2.9", "2.0.0", "4.0.0", "4.1.0", "10.0.0"])
+@pytest.mark.parametrize("version", ["1.9.0", "1.4.0", "1.3.9", "0.9.0", "2.2.9", "2.0.0", "5.0.0", "5.1.0", "10.0.0"])
 def test_a_release_below_the_floor_or_of_another_major_is_refused(version):
     assert not cns_version_supported(version)
 
@@ -70,7 +70,7 @@ def test_connect_accepts_a_later_release_and_records_it(monkeypatch, version):
     assert dock.to_zts_artifact(identity).cns_contract_version == version
 
 
-@pytest.mark.parametrize("version", ["1.9.0", "2.2.0", "4.0.0", None, "2.3.0rc1"])
+@pytest.mark.parametrize("version", ["1.9.0", "2.2.0", "5.0.0", None, "2.3.0rc1"])
 def test_connect_refuses_an_unsupported_release(monkeypatch, version):
     stand_in_cns(monkeypatch, version)
     with pytest.raises(CNSContractError, match="incompatible CNS version"):
