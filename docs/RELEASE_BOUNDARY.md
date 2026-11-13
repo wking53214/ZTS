@@ -299,7 +299,7 @@ What is and is not true about it:
 
 ## CNS compatibility
 
-The dock accepts CNS releases of an accepted major version (`CNS_ACCEPTED_MAJORS`, now 2 and 3) at or above
+The dock accepts CNS releases of an accepted major version (`CNS_ACCEPTED_MAJORS`, now 2, 3 and 4) at or above
 `CNS_CONTRACT_VERSION`, now `2.3.0`, which is the release `pyproject.toml` pins
 (tag `v2.3.0`, commit `41592fb7b6735abe140f745353c09ba3eed8e7a2`). Before this
 change the floor was `1.4.0` and refused major 2, so the dock refused the very
