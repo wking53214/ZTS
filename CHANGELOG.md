@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### CNS 4.0.0 (recorded after PR #36)
+
+PR #36 moved ZTS to CNS 4.0.0 (`v4.0.0`, commit `eabe6c7`): `pyproject.toml` pins it, `CNS_ACCEPTED_MAJORS` is `(2, 3, 4)`, and
+the README and `docs/RELEASE_BOUNDARY.md` say so. It had no changelog entry; this is it. It supersedes the sentence below that
+says major 4 stays refused.
+
+- **What 4.0.0 changes, read from CNS's own changelog:** its only breaking change is that `subject_digest` now refuses a `Mapping`
+  that is not a `dict` and a non-text `Sequence` that is not a `list` or `tuple` (`MappingProxyType`, `UserDict`, `deque`, `range`).
+  Plain values digest exactly as before. The dock builds its content itself, as a `dict` with the roles converted to a `list`, so
+  an identity that holds its roles in another container is still docked and digests as the tuple form does.
+- **Executed against CNS 4.0.0 with Enforcer 0.1.2 and every require flag:** the whole suite passes. The tests written for CNS
+  3.0.0's subclass refusal (a `str` Enum or `str` subclass in an identity is denied `CNS_IDENTITY_UNTRUSTED`) used to skip on any
+  CNS but 3.x; they now run on 3.0.0 and later, and pass on both. One new test, skipped below 4.0.0, holds the point above (a
+  `deque` is refused by CNS, never reaches it from the dock) and fails if the dock stops converting the roles.
+- A rule worth keeping: a new CNS major is accepted only after reading its release note for what it refuses, as was done for 3.0.0
+  and 4.0.0. 5.x is still refused.
+
 ### Deployment support (ninth pass)
 
 Added:
@@ -72,7 +89,7 @@ Added:
 - The dock accepts CNS major 3 (`CNS_ACCEPTED_MAJORS = (2, 3)`), after reading CNS 3.0.0's release note: its only
   breaking change is that `subject_digest` refuses a subclass of `str`, `int`, `float`, `dict`, `list` or `tuple`.
   Executed: the whole suite against CNS 3.0.0 passes apart from the tests that asserted 3.x was refused. An identity
-  carrying such a subclass is denied `CNS_IDENTITY_UNTRUSTED` (`tests/test_cns_three.py`). Major 4 stays refused.
+  carrying such a subclass is denied `CNS_IDENTITY_UNTRUSTED` (`tests/test_cns_three.py`). Major 4 was refused when this was written; see "CNS 4.0.0" above.
   `pyproject.toml` still pins CNS 2.3.0; a CI job runs the suite against 3.0.0.
 
 Changed:
