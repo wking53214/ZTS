@@ -1,0 +1,12 @@
+{
+  "socket_path": "/run/zts/release.sock",
+  "socket_mode": "0660",
+  "socket_group": "zts-app",
+  "callers": {
+    "1001": {"tenants": ["tenant-1"], "subjects": ["alice", "bob"]}
+  },
+  "tower_factory": "assemble_example:build_tower",
+  "max_request_bytes": 262144,
+  "max_concurrent": 8,
+  "read_timeout": 10
+}

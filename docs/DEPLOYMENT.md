@@ -226,7 +226,8 @@ directly. Isolation is a property of your deployment. Objectives to meet, and ho
 * The tower and delivery path run under an account the application does not share.
 
 A worked set-up (accounts, directory layout, hardened systemd unit, and a script that runs these checks) is in
-`examples/isolation/`. It does not include the small service program that wraps the tower; see its README.
+`examples/isolation/`, and the small service the application talks to (Unix socket, caller check by the kernel) is in
+`examples/release_service/`. Neither has run against a real production tower.
 
 ## 9. Acceptance tests to run in your environment
 
