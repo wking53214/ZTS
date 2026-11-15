@@ -20,22 +20,15 @@ release service program itself does not exist yet (below).**
 | File | What it is |
 |---|---|
 | `setup_accounts.sh` | creates the two accounts and the directories with the right owners and modes; never overwrites |
-| `zts-release.service` | a hardened systemd unit (`systemd-analyze security` scores it 1.1, "OK"; the placeholder network allow-list inflates nothing) |
+| `zts-release.service` | a hardened systemd unit (`systemd-analyze security` scores it 1.1, "OK"); it runs `../release_service/service.py` |
 | `check_isolation.py` | acceptance test 14: tries the forbidden things as the application's account and reports what worked |
 | `isolation-check.example.json` | the list of paths and addresses to try |
 
-## What is NOT here, and why
+## The service program
 
-**The service program** (`ExecStart=... -m release_service`). ZTS is a library, and the thin process that wraps your tower and
-answers the application is yours to write, because its request format depends on choices only you can make: how the application
-proves who it is to the service (a Unix socket with peer credentials is the usual way), how an identity reaches the service
-(ZTS's release path takes a CNS identity object, not plain text), and how a grant is obtained. It must do four things:
-1. listen only on a local Unix socket owned by the service, readable by the application account and nobody else;
-2. check who is calling (the kernel tells you the caller's user id on a Unix socket: use it);
-3. build the tower once at start, with `production=True`, and refuse to start if readiness has a FAIL;
-4. return only the release outcome (delivered or the reason code), never a credential, a key or a ledger line.
-
-If you want it, I can scope it with you as a separate piece of work. It is small, but its interface is a design decision.
+The process that wraps your tower and answers the application is in [`../release_service/`](../release_service/README.md): a Unix-socket
+service that reads the caller's account from the kernel, limits which tenants and subjects each account may present, and carries the
+grant and the identity to the tower. It does not decide anything itself. The unit file below runs it.
 
 ## Steps
 

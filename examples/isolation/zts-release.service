@@ -1,9 +1,8 @@
 # The release service: the ONLY process that holds the delivery credentials, the keys and the ledger.
 # Install as /etc/systemd/system/zts-release.service, then `systemctl daemon-reload && systemctl enable --now zts-release`.
 #
-# The program in ExecStart is yours: ZTS is a library, and the thin service that wraps your tower and answers the
-# application's requests is deliberately not part of it (examples/isolation/README.md says why and what it must do).
-# Everything below is about what that process may touch, whatever it runs.
+# The program in ExecStart is examples/release_service/service.py (copy that folder to /opt/zts/release_service). Everything
+# below is about what that process may touch, whatever it runs.
 [Unit]
 Description=ZTS release service (tower, delivery path, ledger, keys)
 After=network-online.target postgresql.service
@@ -13,7 +12,8 @@ Wants=network-online.target
 Type=simple
 User=zts-release
 Group=zts-release
-ExecStart=/opt/zts/venv/bin/python -m release_service
+WorkingDirectory=/opt/zts/release_service
+ExecStart=/opt/zts/venv/bin/python /opt/zts/release_service/service.py /etc/zts/release-service.json
 Restart=on-failure
 RestartSec=2s
 
@@ -28,6 +28,10 @@ PrivateDevices=true
 UMask=0077
 StateDirectory=zts
 StateDirectoryMode=0700
+# The socket lives in /run/zts. The directory is traversable by others (0751) so the application account can reach the socket file,
+# but only the service can create anything in it; the socket file itself is group-readable by the application's group only.
+RuntimeDirectory=zts
+RuntimeDirectoryMode=0751
 
 # --- privileges ------------------------------------------------------------------------------------------------
 NoNewPrivileges=true

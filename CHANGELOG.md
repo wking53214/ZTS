@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### The release service (tenth pass)
+
+Added:
+- `examples/release_service/`: the process the application talks to, under its own account. A Unix-socket service: the kernel names the
+  calling account (SO_PEERCRED); a config lists which accounts may present which tenants and subjects (anything unlisted is refused,
+  `["*"]` must be written out); the request is strict (exact fields, no repeated keys, size-limited, `BUSY` when slots are used up,
+  stalled reads cut off); the service rebuilds the CNS identity, docks it and hands it, with the application's grant, to the tower;
+  the answer is four fields and never a key, credential, ledger line or exception text. It refuses to start on a tower with no release
+  gate or a readiness FAIL, in a socket directory others can write, over a non-socket, or beside a live service. `client.py` is the
+  application's side (standard library only). `delivery.py` is a reference HTTPS delivery and confirmation (credential from a mode-600
+  file, exact `{"held": true}` or it is not confirmed). `assemble_example.py` is the guide's production assembly and is untested.
+  `tests/test_release_service.py` (78 tests, including over a real socket and from the real `nobody` account); twelve mutations (policy
+  open, caller read as a constant, extra fields accepted, no size limit, readiness skipped, no `BUSY`, response echoing the text, unsafe
+  directory allowed, no read timeout, truthy confirmation, credential mode unchecked, identity errors crashing) each fail it.
+- The isolation unit now runs this service (`WorkingDirectory`, `ExecStart`, a `RuntimeDirectory` for the socket); its offline exposure
+  score is still 1.1. NOT tested: a real systemd, a real production tower, your receiver.
+
 ### CNS 4.0.0 (recorded after PR #36)
 
 PR #36 moved ZTS to CNS 4.0.0 (`v4.0.0`, commit `eabe6c7`): `pyproject.toml` pins it, `CNS_ACCEPTED_MAJORS` is `(2, 3, 4)`, and
