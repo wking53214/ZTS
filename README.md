@@ -5,6 +5,16 @@ output is allowed to leave. Seven gates, `G1` through `G7`, run in ascending cos
 that a cheap syntactic check rejects a payload before an expensive semantic one has to
 look at it.
 
+## Role Within ≡TACK
+
+- **What it is.** A filter and release gate for language-model output: seven gates (G1 to G7), then a held release that needs an external grant.
+- **Authority matrix.** Evaluation (G1 to G6, lexical and syntactic filters), enforcement at its own G7 boundary (by calling Enforcer, which binds the grant to the exact release, checks that it is current and consumes it), and evidence generation (a durable hash-chained ledger). Authentication, in part: Enforcer has no verifier of its own, so the signature checks run in adapters that this repository ships and the deployer configures (`zts.trust.Ed25519GrantVerifier` for grants, `zts.status.HttpStatusRevalidator` for signed status answers, and `zts.identity.Ed25519IdentityVerifier` as an optional identity hook), against keys the deployer pins. It also ships the shared replay store (`zts.replay_postgres.PostgresReplayStore`). It does not issue grants or own the trust root, and with no identity hook configured it does not authenticate the caller (it binds the release to the caller's CNS identity digest).
+- **Does not own.** Grants and trust roots (the issuer and Enforcer), identity, the truth or safety of output, and any code path that calls the delivery callback directly.
+- **Depends on.** Optional extras: CNS, Enforcer, PostgreSQL for replay protection, and OpenSSL's `ts` command for timestamping (see "Install").
+- **Depended on by.** UNKNOWN (not inspected here).
+- **Verified versus declared.** Verified against fixtures: the issuer, status service, timestamp authority and receiver in the tests are fixtures. Nothing is observed about a real deployment (see "Guarantees NOT provided").
+- **Fail behavior.** Closed by default: a payload is HELD at G7 until something outside authorizes that exact release. Legacy AUTO mode releases without authorization and cannot be combined with `require_enforcer=True` or `production=True`. The library runs in your process, so code in that process can bypass it.
+
 ## What ZTS does, and does not do
 
 **Does.** It removes first-person voice, hedging, flattery and affect vocabulary from
@@ -99,6 +109,22 @@ accept it; use the tower's rewrite loop when you need clean text out, because
 regenerating under a constraint is the only thing that produces grammatical
 output.
 
+Three more limits of the filters, each run on 2026-11-18 (EXECUTED):
+
+- **Removing a hedge can turn a doubt into a claim.** `scrub("The patient might be allergic to penicillin.")`
+  returns `'The patient be allergic to penicillin.'`, `scrub("It may not be safe to deploy.")` returns
+  `'It not be safe to deploy.'`, and `scrub("Perhaps the reactor should not be restarted.")` returns
+  `'the reactor should not be restarted.'`. Repair changes meaning as well as grammar.
+- **The gates match short, fixed English word lists, letter for letter.** The same sentence audits `breach`
+  (score 85) as written, `advisory` (90) with a zero-width character inside "think" and "might", and `clean`
+  (100) when "I" is a Greek capital iota and the "i" in "might" is a Cyrillic lookalike. Flattery outside the
+  ten listed phrases is not seen: "Great question! You're absolutely right." audits `clean`.
+- **In the `default` and `exec` profiles the instruction-override gate (G1) is advisory.** It records a finding
+  and does not block (see "Profiles").
+
+Treat the gates as a style filter for cooperative output, not as a control against text written to get past
+them.
+
 Two modes, and the difference is the whole point of the ordering:
 
 ```python
@@ -122,7 +148,7 @@ from zts import DeterministicIntegrityTower
 tower = DeterministicIntegrityTower("ops")
 result = asyncio.run(tower.run("Summarize last night's incident.", my_llm_call))
 result.output          # '' : no release authority is configured, so nothing is released
-result.release_outcome # 'held'
+result.release_outcome # 'not_attempted': nothing reached an authority (this comment said 'held')
 result.reason_code     # 'RELEASE_NOT_CONFIGURED'
 result.attempts        # rewrite rounds consumed
 tower.ledger.verify()  # (True, 'chain intact')
@@ -134,7 +160,8 @@ tower.ledger.verify()  # (True, 'chain intact')
 contract layer. It supplies the identity shape and `subject_digest`. ZTS uses only `cns.__version__`,
 `cns.gate.subject_digest` and `cns.governance.IdentityContext`. CNS decides nothing and grants
 nothing: a valid digest proves an identity is the one named, not that it may receive anything.
-The dock accepts CNS 2.x or 3.x at or above 2.3.0 and refuses anything else.
+The dock accepts CNS 2.x, 3.x or 4.x at or above 2.3.0 and refuses anything else (`CNS_ACCEPTED_MAJORS` in
+`src/zts/cns/adapter.py`; this sentence used to stop at 3.x, which would have refused the pinned `v4.0.0`).
 
 **Enforcer** (pinned to commit `e4d5688` (0.1.2), accepted as `0.1.x`) is the authorization authority. Its
 `execute(envelope, proof, callback)` verifies the proof through a verifier you supply, checks the
@@ -248,7 +275,9 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for a step-by-step deployment check
 privileges, acceptance tests), [docs/OPERATIONS.md](docs/OPERATIONS.md) for secrets, monitoring, backup and recovery,
 rotation and incident response, [docs/WIRE_FORMATS.md](docs/WIRE_FORMATS.md) for what an issuer must produce, and
 [docs/RELEASE_BOUNDARY.md](docs/RELEASE_BOUNDARY.md) for the envelope, the checks and the denial codes.
-`pip install "zts[production]"` pulls every optional dependency. The assembly:
+From a clone, `pip install -e ".[production]"` pulls every optional dependency. The bare form
+`pip install "zts[production]"` does not work: no package named `zts` is published, and pip answers "No matching
+distribution found" (EXECUTED 2026-11-18). The assembly:
 
 ```python
 trust = FileTrustRoot("/etc/zts/trust.json")                      # keys you pinned: grant and status roles
@@ -290,7 +319,8 @@ authentication, anchor independence and any custom adapter stay `UNKNOWN`; peopl
   timestamp authority does not remember your ledger, so a consistent rollback of ledger and receipts is
   invisible unless someone holds newer receipts elsewhere.
 * That the receiver is independent of the sink, so that a confirmation means something.
-* That output is true, safe or correct. The gates are filters, and the README below documents their limits.
+* That output is true, safe or correct. The gates are filters, and their limits are listed under "Use" above
+  (this line used to point below, where no such list existed).
 * That `release_id` is unique across your system. Enforcer enforces uniqueness for ids it has seen.
 * Authentication of the caller beyond what your issuer and your optional hook do.
 * Interop with any public timestamp authority (untested), or any claim about a real deployment (none has
@@ -388,10 +418,16 @@ Numbers above are from one run on one machine. Run `zts bench` for yours.
 ## Tests
 
 ```bash
-pytest   # 337 pass, 24 skip with nothing optional installed
-pytest   # 1033 pass with every extra, a PostgreSQL server and openssl, on the pinned Enforcer 0.1.1
-pytest   # 1016 pass, 17 skip on Enforcer 0.1.0 (still supported; the 0.1.1 additions are skipped)
+pytest   # 368 pass, 33 skip with only the dev extra installed (it supplies pytest)
+pytest   # 1344 pass with every extra, a PostgreSQL server and openssl, on the pinned Enforcer 0.1.2
+pytest   # 1304 pass, 40 skip on Enforcer 0.1.0 (still supported; the 0.1.1 and 0.1.2 additions are skipped)
 ```
+
+EXECUTED 2026-11-18 at `70aa19b`, Python 3.13, each run in its own fresh environment, the way the CI file runs them. `test` job (dev extra only): 368 passed, 33 skipped. `cns` job: 389 passed, 32 skipped. `enforcer` job: 765 passed, 22 skipped. `production-stack` job (every extra, PostgreSQL 16 binaries, OpenSSL, every require flag): 1,344 passed, none skipped. The same full run with CNS `v4.1.0` in place of the pinned `v4.0.0`: 1,344 passed. With CNS `v3.0.0`, as the `cns-3` job runs it: 1,343 passed, 1 skipped. With Enforcer 0.1.0 in place of the pinned 0.1.2: 1,304 passed, 40 skipped.
+
+Two timing-sensitive tests each failed once across those full runs, then passed on a re-run and in 12 focused repeats: `tests/test_dashboard.py::TestWindow::test_p95_is_at_least_the_average` and `tests/test_release_service.py::test_when_every_slot_is_busy_a_new_caller_is_told_so_immediately`. They are reported here and were not changed.
+
+The counts this section showed before (337 and 24, 1033, 1016 and 17) came from earlier commits. So did a line dated 2026-11-15 (1032 passed, 12 skipped at `0300788`, measured in a shared environment with a mixed set of extras). At `0300788` the full run gives 1,266 passed; main has since added 78 release-service tests. Not run: CI itself, Python 3.11 and 3.12, any public timestamp authority.
 
 The skips are whole modules that need a real package or server: CNS, Enforcer, PostgreSQL binaries,
 OpenSSL's `ts` command, or the Enforcer 0.1.1 additions when an older Enforcer is installed. CI runs the full set in the `production-stack` job under
