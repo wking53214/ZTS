@@ -148,14 +148,26 @@ def test_a_run_cancelled_before_the_release_starts_never_attempts_it(tmp_path):
 
 
 def test_a_hung_grant_provider_is_bounded_and_spends_nothing(tmp_path, mode="sync"):
+    # No wall-clock bound: the provider blocks on an event, so "bounded" means the call
+    # returned while the provider had still not finished. A slow CI machine cannot flip that.
     s = build(tmp_path, gate_timeout=0.2)
-    started = time.perf_counter()
-    r = run(s, mode, request(s, provider=slow_provider(s, 1.5)))
-    assert time.perf_counter() - started < 1.0
+    let_go, finished = threading.Event(), threading.Event()
+
+    def hung(candidate):
+        s.candidates.append(candidate)
+        let_go.wait(30)
+        try:
+            return mint(ActionEnvelope.from_canonical_bytes(candidate.envelope_bytes), s.clock)
+        finally:
+            finished.set()
+
+    r = run(s, mode, request(s, provider=hung))
+    assert not finished.is_set(), "the gate waited for the hung provider instead of timing out"
     assert r.released is False and r.reason_code == "PROOF_PROVIDER_TIMEOUT"
     assert r.release_outcome == ReleaseState.DENIED and r.authorization["grant_state"] == "unspent"
     assert s.sink.calls == []
-    time.sleep(1.5)  # the abandoned provider finally returns; it must change nothing
+    let_go.set()  # the abandoned provider finally returns; it must change nothing
+    assert finished.wait(10)
     assert s.sink.calls == [] and s.status.calls == 0
 
 
