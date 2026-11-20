@@ -28,7 +28,7 @@ from .translation import ADAPTER_VERSION, make_unavailable_artifact, translate_i
 # behaves the same; an identity carrying a subclass is denied (fail closed),
 # and test_cns_three.py holds both facts.
 #
-# Major 4 was accepted when ZTS moved its pin to v4.0.0. Its release note lists
+# Major 4 was accepted when ZTS moved its pin to v4.1.0. Its release note lists
 # one breaking change: subject_digest refuses a Mapping that is not a dict and
 # a non-text Sequence that is not a list or tuple. The dock hands CNS a dict
 # whose roles are a list, so it is unaffected.

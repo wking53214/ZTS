@@ -77,7 +77,7 @@ No dependencies. Python 3.11+. Everything else is an optional extra, imported on
 
 | Extra | Adds | For |
 |---|---|---|
-| `cns` | CNS `v4.0.0` | the identity dock |
+| `cns` | CNS `v4.1.0` | the identity dock |
 | `enforcer` | Enforcer, pinned to a commit | the release boundary |
 | `trust` | `cryptography` | the Ed25519 grant verifier and the HTTPS status client |
 | `replay-postgres` | `psycopg[binary]` | the shared replay store (the PostgreSQL server is yours) |
@@ -157,12 +157,12 @@ tower.ledger.verify()  # (True, 'chain intact')
 
 ## How the pieces fit
 
-**CNS** ([CNS](https://github.com/wking53214/CNS), pinned `v4.0.0`, commit `eabe6c7`) is a neutral
+**CNS** ([CNS](https://github.com/wking53214/CNS), pinned `v4.1.0`, commit `c84ef8c`) is a neutral
 contract layer. It supplies the identity shape and `subject_digest`. ZTS uses only `cns.__version__`,
 `cns.gate.subject_digest` and `cns.governance.IdentityContext`. CNS decides nothing and grants
 nothing: a valid digest proves an identity is the one named, not that it may receive anything.
 The dock accepts CNS 2.x, 3.x or 4.x at or above 2.3.0 and refuses anything else (`CNS_ACCEPTED_MAJORS` in
-`src/zts/cns/adapter.py`; this sentence used to stop at 3.x, which would have refused the pinned `v4.0.0`).
+`src/zts/cns/adapter.py`; this sentence used to stop at 3.x, which would have refused the pinned `v4.1.0`).
 
 **Enforcer** (pinned to commit `e4d5688` (0.1.2), accepted as `0.1.x`) is the authorization authority. Its
 `execute(envelope, proof, callback)` verifies the proof through a verifier you supply, checks the
