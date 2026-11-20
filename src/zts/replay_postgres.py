@@ -39,7 +39,7 @@ the database and every release host, so keep clocks within seconds. Rows with no
 are never pruned. Enforcer passes the expiry only from the release that adds it; older Enforcer
 releases leave it empty.
 
-Needs ``pip install zts[replay-postgres]``.
+Needs ``pip install 'zts[replay-postgres] @ git+https://github.com/wking53214/ZTS.git@main'``.
 """
 
 from __future__ import annotations

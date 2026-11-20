@@ -70,7 +70,7 @@ class Ed25519IdentityVerifier:
     """An ``identity_verifier`` hook: True only for an identity signed by a current ``identity`` key for this audience.
 
     Never raises: any problem is a False, with a short reason passed to ``on_reject`` (never the signature or the identity).
-    Needs ``pip install zts[trust]``.
+    Needs ``pip install 'zts[trust] @ git+https://github.com/wking53214/ZTS.git@main'``.
     """
 
     def __init__(
