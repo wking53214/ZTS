@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from zts.capstone import ArchitectsProtocol, ReleaseMode
@@ -10,6 +12,16 @@ from zts.tower import DeterministicIntegrityTower
 
 CLEAN = "Disk utilization reached 94% on node 3 at 02:17 UTC."
 DIRTY = "As an AI, I think we may be wrong."
+
+
+def _finished_run(elapsed_ms: float) -> SimpleNamespace:
+    """The few fields the dashboard reads from a finished run, with a chosen latency."""
+    return SimpleNamespace(
+        released=True,
+        attempts=1,
+        elapsed_ms=elapsed_ms,
+        sieve=SimpleNamespace(verdict=None, findings=[]),
+    )
 
 
 class TestCounting:
@@ -75,12 +87,23 @@ class TestWindow:
             TelemetryDashboard(window=0)
 
     def test_p95_is_at_least_the_average(self):
+        # Latencies are fixed here, not measured. Measured ones let a single slow run on a busy
+        # machine pull the average above the 95th percentile, which is correct behaviour but
+        # made this test fail now and then.
         dash = TelemetryDashboard()
-        tower = DeterministicIntegrityTower("ops", dashboard=dash)
-        for _ in range(20):
-            tower.enforce(CLEAN)
+        for ms in [1.0] * 10 + [2.0] * 10:
+            dash.record(_finished_run(ms))
         snap = dash.snapshot()
+        assert snap["p95_latency_ms"] == 2.0
         assert snap["p95_latency_ms"] >= snap["avg_latency_ms"]
+
+    def test_one_slow_outlier_raises_the_average_but_not_the_p95(self):
+        dash = TelemetryDashboard()
+        for ms in [1.0] * 19 + [100.0]:
+            dash.record(_finished_run(ms))
+        snap = dash.snapshot()
+        assert snap["p95_latency_ms"] == 1.0
+        assert snap["avg_latency_ms"] > snap["p95_latency_ms"]
 
 
 class TestTowerWiring:
