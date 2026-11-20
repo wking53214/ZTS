@@ -109,6 +109,8 @@ accept it; use the tower's rewrite loop when you need clean text out, because
 regenerating under a constraint is the only thing that produces grammatical
 output.
 
+The word-list gates are a tripwire for obvious problems, not a guarantee. They match fixed English words and phrases, so reworded or non-English text can pass (`tests/test_screen_known_limits.py` records three cases). Anything that must be caught needs a check on what the text is used for, or a person who reviews it. That is not built here.
+
 Two limits of the filters were found on 2026-11-18 (EXECUTED) and fixed on 2026-11-19:
 
 - **Removing a hedge used to turn a doubt into a claim.** `scrub("The patient might be allergic to penicillin.")`
