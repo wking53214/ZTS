@@ -34,7 +34,7 @@ What this does NOT give you, so nothing downstream claims more:
     function you supply the moment it is durable, so a copy can be kept somewhere the ledger's
     writer cannot rewrite. ZTS cannot tell whether that place is out of the writer's reach.
 
-Needs ``pip install zts[tsa]``.
+Needs ``pip install 'zts[tsa] @ git+https://github.com/wking53214/ZTS.git@main'``.
 """
 
 from __future__ import annotations

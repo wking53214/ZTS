@@ -534,7 +534,7 @@ def lookup_key(root: TrustRoot, kid: str, role: str, now: datetime) -> TrustedKe
 
 
 class Ed25519GrantVerifier:
-    """Enforcer ``ProofVerifier`` for ``zts-grant-1`` proofs. Needs ``pip install zts[trust]``."""
+    """Enforcer ``ProofVerifier`` for ``zts-grant-1`` proofs. Needs ``pip install 'zts[trust] @ git+https://github.com/wking53214/ZTS.git@main'``."""
 
     def __init__(
         self,
