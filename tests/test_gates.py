@@ -77,11 +77,13 @@ class TestG6PronominalPurge:
 
 
 class TestG3SyntacticBreach:
-    def test_strips_hedges(self, ctx):
-        out, findings = gate_sbf("This might potentially work.", ctx)
-        assert findings
-        assert "might" not in out.lower()
-        assert "potentially" not in out.lower()
+    def test_reports_hedges_and_leaves_them_in_place(self, ctx):
+        # Deleting a hedge turns a doubt into a claim, so it is reported, not removed.
+        for text in ("This might potentially work.", "The patient might be allergic to penicillin.",
+                     "It may not be safe to deploy."):
+            out, findings = gate_sbf(text, ctx)
+            assert findings
+            assert out == text
 
     def test_strips_puffery(self, ctx):
         out, _ = gate_sbf("Honestly this may be fine.", ctx)

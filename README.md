@@ -109,16 +109,17 @@ accept it; use the tower's rewrite loop when you need clean text out, because
 regenerating under a constraint is the only thing that produces grammatical
 output.
 
-Three more limits of the filters, each run on 2026-11-18 (EXECUTED):
+Two limits of the filters were found on 2026-11-18 (EXECUTED) and fixed on 2026-11-19:
 
-- **Removing a hedge can turn a doubt into a claim.** `scrub("The patient might be allergic to penicillin.")`
-  returns `'The patient be allergic to penicillin.'`, `scrub("It may not be safe to deploy.")` returns
-  `'It not be safe to deploy.'`, and `scrub("Perhaps the reactor should not be restarted.")` returns
-  `'the reactor should not be restarted.'`. Repair changes meaning as well as grammar.
-- **The gates match short, fixed English word lists, letter for letter.** The same sentence audits `breach`
-  (score 85) as written, `advisory` (90) with a zero-width character inside "think" and "might", and `clean`
-  (100) when "I" is a Greek capital iota and the "i" in "might" is a Cyrillic lookalike. Flattery outside the
-  ten listed phrases is not seen: "Great question! You're absolutely right." audits `clean`.
+- **Removing a hedge used to turn a doubt into a claim.** `scrub("The patient might be allergic to penicillin.")`
+  returned `'The patient be allergic to penicillin.'`. G3 now reports a hedge and leaves it in the text, the way G2
+  already did, so the sentence keeps its doubt and the finding still lowers the score. Puffery is still removed.
+- **Zero-width characters and lookalike letters used to hide a word from the gates.** The gates now read a copy of
+  the text with invisible format characters removed and with Cyrillic or Greek lookalike letters folded to Latin
+  inside words that also hold a Latin letter. Ordinary Cyrillic or Greek words are untouched. Still open: a word made
+  only of lookalikes (a lone Greek capital iota for "I") is not folded, and the word lists are still fixed English.
+  Flattery outside the ten listed phrases is not seen: "Great question! You're absolutely right." audits `clean`.
+  The returned text no longer contains the invisible characters.
 - **In the `default` and `exec` profiles the instruction-override gate (G1) is advisory.** It records a finding
   and does not block (see "Profiles").
 
