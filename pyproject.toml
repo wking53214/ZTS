@@ -12,10 +12,11 @@ license = { file = "LICENSE" }
 authors = [{ name = "William N. King" }]
 keywords = ["llm", "filter", "governance", "middleware", "sycophancy", "zero-trust"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Text Processing :: Filters",
 ]
 dependencies = []

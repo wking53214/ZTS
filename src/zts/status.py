@@ -86,7 +86,7 @@ class HttpStatusRevalidator:
     """Enforcer ``AuthorizationRevalidator`` backed by the issuer's signed status API.
 
     ``trust`` is the same trust root the grant verifier uses; the status keys live in it
-    with role ``status``. Needs ``pip install zts[trust]``.
+    with role ``status``. Needs ``pip install 'zts[trust] @ git+https://github.com/wking53214/ZTS.git@main'``.
     """
 
     def __init__(
