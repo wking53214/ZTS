@@ -426,7 +426,7 @@ pytest   # 1344 pass with every extra, a PostgreSQL server and openssl, on the p
 pytest   # 1304 pass, 40 skip on Enforcer 0.1.0 (still supported; the 0.1.1 and 0.1.2 additions are skipped)
 ```
 
-EXECUTED 2026-11-18 at `70aa19b`, Python 3.13, each run in its own fresh environment, the way the CI file runs them. `test` job (dev extra only): 368 passed, 33 skipped. `cns` job: 389 passed, 32 skipped. `enforcer` job: 765 passed, 22 skipped. `production-stack` job (every extra, PostgreSQL 16 binaries, OpenSSL, every require flag): 1,344 passed, none skipped. The same full run with CNS `v4.1.0` in place of the pinned `v4.0.0`: 1,344 passed. With CNS `v3.0.0`, as the `cns-3` job runs it: 1,343 passed, 1 skipped. With Enforcer 0.1.0 in place of the pinned 0.1.2: 1,304 passed, 40 skipped.
+EXECUTED 2026-11-18 at `70aa19b`, Python 3.13, each run in its own fresh environment, the way the CI file runs them. `test` job (dev extra only): 368 passed, 33 skipped. `cns` job: 389 passed, 32 skipped. `enforcer` job: 765 passed, 22 skipped. `production-stack` job (every extra, PostgreSQL 16 binaries, OpenSSL, every require flag): 1,344 passed, none skipped. The same full run with CNS `v4.1.0` in place of `v4.0.0`, the pin then: 1,344 passed. With CNS `v3.0.0`, as the `cns-3` job runs it: 1,343 passed, 1 skipped. With Enforcer 0.1.0 in place of the pinned 0.1.2: 1,304 passed, 40 skipped.
 
 Two timing-sensitive tests each failed once across those full runs, then passed on a re-run and in 12 focused repeats: `tests/test_dashboard.py::TestWindow::test_p95_is_at_least_the_average` and `tests/test_release_service.py::test_when_every_slot_is_busy_a_new_caller_is_told_so_immediately`. They are reported here and were not changed.
 
