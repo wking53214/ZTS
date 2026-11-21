@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Status
+
+- The package classifier moves from "3 - Alpha" to "4 - Beta" (owner decision, 2026-11-21), now that both filter fixes have shipped. The README still says nothing has been observed against a real deployment; Beta here means the code and tests are settled, not that a deployment has been checked.
+
 ### The release service (tenth pass)
 
 Added:
