@@ -375,6 +375,43 @@ one is configured. Production uses the Enforcer gate; the legacy `AUTO`,
 An advisory gate still records its findings. A profile that declines to block
 on something still tells you about it.
 
+## The leakage check
+
+Separate from the gates, every profile runs a leakage check on the text the gates produced
+(`src/zts/leakage.py`). A hit holds the payload (verdict `breach`) at any score, on every profile. It
+never rewrites or redacts the text, and its flag never contains the secret: a card shows only its last
+four digits, a credential only its name.
+
+It reads a folded copy of the text, so fullwidth letters, digits and colons, mathematical letters,
+no-break spaces and invisible format characters do not hide a match.
+
+What it catches:
+
+- **Card numbers**: 13 to 19 digits that pass the Luhn checksum, written together or with one space,
+  tab, dot, slash, hyphen, any dash (en dash included) or line break between digits.
+- **Credential assignments**: a name ending in `api_key`, `secret_key`, `access_key`, `secret`,
+  `token`, `password`, `passwd` or `pwd`, with or without a prefix joined by `_` or `-`
+  (`aws_secret_access_key`, `DB_PASSWORD`), quoted or not (a JSON key), then `:` or `=` and a value of
+  eight or more characters.
+- **Known formats**: AWS access key ids (`AKIA...`), GitHub tokens (`ghp_...` and relatives), `sk-...`
+  API keys, any PEM or PGP private key header (`RSA`, `EC`, `DSA`, `OPENSSH`, `ENCRYPTED`, `PGP ...
+  BLOCK`), an `Authorization:` header with a known scheme (`Bearer`, `Basic`, `Digest`, `Token` and
+  others), and a bearer token of 16 or more characters outside a header.
+
+What it does not catch (a pattern check passes any secret in a form it does not know):
+
+- A secret with no name or known prefix beside it: a bare password, a random-looking key on its own
+  line, a key body without its `-----BEGIN` header.
+- A credential name that does not end with one of the words above (`secret_value`, `client_credential`),
+  or a value shorter than eight characters.
+- A card number with two or more separators between digits, split by words, written in words, or
+  shorter or longer than 13 to 19 digits. A card that fails the checksum is ignored on purpose.
+- Other personal data: account and routing numbers, national id numbers, names, addresses, phone numbers.
+- Anything encoded (base64, hex, URL encoding) or spread across several payloads.
+
+It can also hold text that holds no secret: prose such as `the secret: everyone knew` has the shape of an
+assignment, and about one random 16-digit run in ten passes the checksum. A held payload goes to a person.
+
 ## Does the fail-fast ordering actually work
 
 Yes, in one of the two modes, and the benchmark separates them.

@@ -92,6 +92,17 @@ should not be the last thing between generated text and its consumer. Earlier
 versions defaulted to `AUTO`, which made that acknowledgment optional; the
 default is now to hold.
 
+### Leakage check (outside the array)
+
+Not a gate and not scored. After the array, `zts.leakage` looks for card numbers
+(Luhn-checked) and credentials (named assignments and known formats such as AWS
+keys, GitHub tokens, private key headers and Authorization headers) in the text
+the gates produced. Any hit sets the verdict to BREACH on every profile, so the
+tower holds the payload; the text is never redacted, and the evidence is masked.
+It matches on a compatibility-folded copy so fullwidth and other lookalike forms
+do not hide a match. It is a pattern check with known gaps; the README section
+"The leakage check" lists what it covers and what it does not.
+
 ## Fail-fast ordering
 
 Canonical numbering is `G1 … G7`. Execution order is by ascending cost:

@@ -132,3 +132,82 @@ class TestSieveWiring:
         tower.enforce(f"Charge {CARD}")
         assert len(tower.ledger) > 0
         assert "4111111111111111" not in tower.ledger.to_jsonl()
+
+
+class TestFormatsMissedBefore13_0_1:
+    """Each of these audited CLEAN at 9784786 (main, 2026-11-25). Each must now hold the payload."""
+
+    CARD_DIGITS = "4111111111111111"
+
+    @pytest.mark.parametrize(
+        "text, evidence",
+        [
+            ("aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "aws_secret_access_key=****"),
+            ("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.abc123", "authorization_header=****"),
+            ("authorization: basic dXNlcjpwYXNzd29yZA==", "authorization_header=****"),
+            ("curl -H 'Bearer 9f8e7d6c5b4a39281706f5e4d3c2b1a0'", "bearer_token=****"),
+            ("-----BEGIN ENCRYPTED PRIVATE KEY-----", "private_key_block=****"),
+            ("-----BEGIN PGP PRIVATE KEY BLOCK-----", "private_key_block=****"),
+            ("\uff50\uff41\uff53\uff53\uff57\uff4f\uff52\uff44 = hunter2hunter2", "password=****"),
+            ("password\uff1a hunter2hunter2", "password=****"),
+            ('{"password": "hunter2hunter2"}', "password=****"),
+            ("DB_PASSWORD=hunter2hunter2", "DB_PASSWORD=****"),
+        ],
+    )
+    def test_credential_format_is_flagged_once_with_name_only(self, text, evidence):
+        flags = leakage_flags(text)
+        assert [f.evidence for f in flags] == [evidence]
+        assert all(f.code == "CREDENTIAL" for f in flags)
+
+    @pytest.mark.parametrize(
+        "separator", [".", "/", "\u2013", "\n", "\r\n", "\u00a0", "\t", "\uff0d", "\u2212"],
+    )
+    def test_card_with_any_separator_is_flagged(self, separator):
+        d = self.CARD_DIGITS
+        text = f"card {separator.join([d[0:4], d[4:8], d[8:12], d[12:16]])} today"
+        flags = leakage_flags(text)
+        assert [f.evidence for f in flags] == ["************1111"]
+
+    def test_fullwidth_card_digits_are_flagged(self):
+        text = "".join(chr(ord(c) + 0xFEE0) for c in self.CARD_DIGITS)
+        assert [f.code for f in leakage_flags(text)] == ["CARD_NUMBER"]
+
+    def test_offset_points_into_the_text_as_given(self):
+        text = "\ufb01le \u200bx password\uff1a hunter2hunter2"
+        (flag,) = leakage_flags(text)
+        assert text[flag.offset:].startswith("password")
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "The bearer of this letter is a colleague.",
+            "Bearer tokens expire after one hour.",
+            "authorization: needed beforehand from the manager",
+            "Use tokenizer = BertTokenizerFast here.",
+            "max_tokens = 4096",
+            "Version 10.0.19041.1234 was installed on 2026/11/25.",
+            "Call +1.555.123.4567 or 555-123-4567.",
+            "IP 192.168.100.200 and 10.0.0.1",
+            "Order #2026-11-25-0001 shipped.",
+            "-----BEGIN PUBLIC KEY-----",
+            "-----BEGIN CERTIFICATE-----",
+            "card 4111.1111.1111.1112",
+        ],
+    )
+    def test_near_misses_are_not_flagged(self, text):
+        assert leakage_flags(text) == []
+
+    @pytest.mark.parametrize("profile", ["default", "ops", "exec", "legal"])
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.abc123",
+            "-----BEGIN ENCRYPTED PRIVATE KEY-----",
+            "4111.1111.1111.1111",
+            "4111\n1111\n1111\n1111",
+            "\uff50\uff41\uff53\uff53\uff57\uff4f\uff52\uff44 = hunter2hunter2",
+        ],
+    )
+    def test_sieve_holds_each_format_on_every_profile(self, profile, text):
+        assert ZeroTrustSieve(profile).run(text).verdict is Verdict.BREACH
