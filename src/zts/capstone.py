@@ -39,7 +39,7 @@ class ReleaseMode(Enum):
     AUTO = "auto"
     #: Hold unless a matching authority token is presented.
     HANDSHAKE = "handshake"
-    #: Hold unless a supplied callback approves. For interactive review.
+    #: Hold unless a supplied callback returns exactly True. For interactive review.
     CALLBACK = "callback"
     #: Never release. Useful for dry runs and for testing the held path.
     SEALED = "sealed"
@@ -87,9 +87,15 @@ class ArchitectsProtocol:
 
         if self.mode is ReleaseMode.CALLBACK:
             assert self._approver is not None
-            ok = bool(self._approver(payload))
+            # Exactly True releases, the same rule as the identity hook. A truthy
+            # string such as "no" or "False", a list, or 1 is not an approval.
+            answer = self._approver(payload)
+            if answer is True:
+                return ReleaseDecision(True, self.mode, "approver granted")
+            if answer is False:
+                return ReleaseDecision(False, self.mode, "approver declined")
             return ReleaseDecision(
-                ok, self.mode, "approver granted" if ok else "approver declined"
+                False, self.mode, "approver returned something other than True: held"
             )
 
         # HANDSHAKE

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fail-closed consistency (P2, 2026-11-25)
+
+Found at `9784786` (EXECUTED):
+- The legacy `CALLBACK` capstone released on any truthy return from the approver: "no", "False", a list, 1.
+  It now releases only on exactly `True`, the rule the identity hook already uses. Anything else holds, and the
+  reason says the approver returned something other than True.
+- A profile with `max_retries` below 1 built a tower whose `run()` crashed with `AssertionError` (with
+  `AttributeError` under `python -O`). The tower now refuses such a profile when it is built (`ValueError`), and
+  also refuses a non-integer or a bool.
+
+Tests: `tests/test_fail_closed.py` (19 of its tests fail on `9784786`; the rest hold what must keep working).
+
 ### Unicode bypasses in G1 to G6 (P1, 2026-11-25)
 
 Found by audit at `9784786` on the ops profile (EXECUTED): fullwidth letters bypassed G1, G3 and G6 completely
