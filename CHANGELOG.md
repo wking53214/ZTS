@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Paragraph breaks are kept in delivered text (P7, 2026-11-26)
+
+- Owner decision: a blank line between paragraphs now survives the whitespace cleanup (`tidy` in
+  `src/zts/normalizer.py`). Before, it became a single space, so two paragraphs arrived as one line. Now a run of
+  whitespace holding two or more line breaks becomes exactly one blank line; any other run of two or more
+  whitespace characters still becomes one space, as before. A Windows blank line (CR LF CR LF) arrives as LF LF.
+- Effect on records: text with paragraphs is delivered differently, so its digest in the ledger and receipts
+  differs from what the same input produced before. Earlier records still verify; each matches the text that was
+  delivered at the time. Gate matching is unchanged: the gates already match any whitespace run as a space.
+- Tests: `tests/test_unicode_folding.py` (`TestDeliveredText`), through the sieve and the tower. Seven of the new
+  cases fail on the old cleanup.
+
+Noted, not changed: a single line break that sits next to a space or tab ("end. \nNext") is still collapsed to a
+space, because the run is two whitespace characters with one line break. Separately, when a removed phrase is
+followed by a comma, the cleanup that pulls punctuation onto the previous word also pulls it across the line
+break ("Disk full.\n\nAs an AI, I think..." arrives as "Disk full., think..."). Both behaved this way before P7.
+
+### Close the SQLite replay stores the tests open (P6, 2026-11-26)
+
+- The "unclosed database" warnings noted under P4 are fixed in the tests: every replay store a test opens is
+  registered with `tests/cleanup_kit.py` and closed by an autouse fixture when the test ends. `pyproject.toml`
+  now turns a leaked SQLite connection into a test failure. Full run: 0 such warnings (were about 510).
+
+### Deterministic timing tests (P5, 2026-11-26)
+
+- Three tests that failed CI on slow machines no longer depend on wall-clock speed: the release service's BUSY
+  probe reads the answer when the service has already hung up, the cancel-during-revalidation test cancels on a
+  signal instead of after a fixed delay, and the trust recheck-interval test uses a clock only the trust module
+  sees. Each has a regression test that forces the order the flake depended on.
+
 ### Static checks in CI (P4, 2026-11-26)
 
 - **Type checker.** mypy (pinned in a new `static` extra, settings in `pyproject.toml`) runs over `src/zts` in a

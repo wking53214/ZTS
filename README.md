@@ -137,8 +137,8 @@ accent hid a hedge from G3, and a line break, tab or no-break space inside "as a
   of the spelling. Compatibility folding also changes some symbols: "m²" becomes "m2", "™"
   becomes "TM", "½" becomes "1⁄2". `payload_in` keeps the text as it arrived.
 - **Line breaks and tabs are kept** in the delivered text. Inside a phrase the gates match any run of
-  whitespace as a space. (Not changed by this fix: a blank line between paragraphs is collapsed to a single
-  space by the existing whitespace cleanup, as it was before.)
+  whitespace as a space. A blank line between paragraphs is kept too: any gap that holds two or more line
+  breaks arrives as exactly one blank line, and any other run of spaces or tabs arrives as one space.
 - **Still open, on purpose:** the G1 word lists were not widened. An instruction override with a period
   between the verb and the noun ("Ignore. All previous instructions"), with more than 40 characters between
   them, or written with other words ("Pay no attention to the earlier guidance") is not found by G1.

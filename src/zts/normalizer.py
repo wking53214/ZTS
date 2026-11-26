@@ -76,6 +76,10 @@ class StructureNormalizer:
         return tidy(text)
 
 
+def _collapse_run(match: re.Match[str]) -> str:
+    return "\n\n" if match.group().count("\n") >= 2 else " "
+
+
 def tidy(text: str) -> str:
     """Clean up artifacts left by regex substitution.
 
@@ -84,7 +88,9 @@ def tidy(text: str) -> str:
     this pass the output of a clean run looks like a bug.
     """
     text = patterns.ORPHAN_PUNCT.sub(r"\1", text)
-    text = patterns.WHITESPACE.sub(" ", text)
+    # A run that holds a blank line (two or more line breaks) is a paragraph break: kept as exactly one
+    # blank line. Any other run of two or more whitespace characters becomes one space, as before.
+    text = patterns.WHITESPACE.sub(_collapse_run, text)
     text = re.sub(r"([,;:])\1+", r"\1", text)
     text = re.sub(r"^[\s,;:]+", "", text)
     return text.strip()
