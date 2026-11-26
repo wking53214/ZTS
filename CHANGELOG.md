@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Leakage check: missed formats (P0, 2026-11-25)
+
+Found by audit at `9784786` (EXECUTED): each of these audited `clean` on every profile.
+
+Fixed:
+- A credential name with a prefix joined by `_` or `-` (`aws_secret_access_key = ...`, `DB_PASSWORD=...`): the old
+  name match needed a word boundary, and `_` is a word character.
+- `Authorization: Bearer <token>` (and the other common schemes), plus a bearer token outside a header.
+- `-----BEGIN ENCRYPTED PRIVATE KEY-----`, and `-----BEGIN PGP PRIVATE KEY BLOCK-----` (found in the same pass, not on
+  the original list).
+- Card numbers separated by dots, slashes, en dashes and other dashes, tabs, line breaks or no-break spaces.
+- `password` in fullwidth letters or followed by a fullwidth colon: the check now reads a compatibility-folded copy
+  of the text (offsets still point into the text as given).
+- A quoted name, as in a JSON key (`"password": "..."`), found in the same pass, not on the original list.
+
+Added: `tests/test_leakage.py::TestFormatsMissedBefore13_0_1` (each case fails on `9784786`, plus near misses that
+must stay unflagged), and a README section "The leakage check" listing what it covers and what it does not.
+
 ### Status
 
 - The package classifier moves from "3 - Alpha" to "4 - Beta" (owner decision, 2026-11-21), now that both filter fixes have shipped. The README still says nothing has been observed against a real deployment; Beta here means the code and tests are settled, not that a deployment has been checked.
