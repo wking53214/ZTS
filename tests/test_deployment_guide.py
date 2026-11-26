@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from cleanup_kit import closed_after_test
 from pg_kit import cluster  # noqa: F401  (session fixture)
 from test_production_assembly import world  # noqa: F401  (fixture: a fully assembled production tower)
 from zts.anchor_tsa import Rfc3161Anchor
@@ -81,7 +82,7 @@ def test_the_sql_runs_and_the_roles_get_exactly_the_access_the_guide_claims(clus
     expires = dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=5)
     gone = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1)
 
-    release = PostgresReplayStore(as_role("zts_release"), create=False)
+    release = closed_after_test(PostgresReplayStore(as_role("zts_release"), create=False))
     assert release.consume("i", "n1", "r1", expires_at=expires) is True
     assert release.consume("i", "n1", "r1", expires_at=expires) is False
     assert release.health() is True
@@ -92,19 +93,19 @@ def test_the_sql_runs_and_the_roles_get_exactly_the_access_the_guide_claims(clus
     with pytest.raises(ReplayStoreError, match="cannot create"):
         PostgresReplayStore(as_role("zts_release"), table="not_there_yet")  # and cannot create tables
 
-    PostgresReplayStore(admin, create=False).consume("i", "old", "r-old", expires_at=gone)
-    pruner = PostgresReplayStore(as_role("zts_pruner"), create=False)
+    closed_after_test(PostgresReplayStore(admin, create=False)).consume("i", "old", "r-old", expires_at=gone)
+    pruner = closed_after_test(PostgresReplayStore(as_role("zts_pruner"), create=False))
     assert pruner.prune() == 1
     with pytest.raises(ReplayStoreError):
         pruner.consume("i", "n2", "r2", expires_at=expires)  # the pruner cannot consume a grant
 
-    serial = PostgresSerialStore(as_role("zts_release"), create=False)
+    serial = closed_after_test(PostgresSerialStore(as_role("zts_release"), create=False))
     serial.record(5, "d5")
     serial.record(6, "d6")
     with pytest.raises(TrustRootError):
         serial.record(5, "d5")  # a rollback is refused even for the role that may write
     with pytest.raises(TrustRootError):
-        PostgresSerialStore(as_role("zts_pruner"), create=False).record(7, "d7")
+        closed_after_test(PostgresSerialStore(as_role("zts_pruner"), create=False)).record(7, "d7")
     release.close(), pruner.close(), serial.close()
 
 

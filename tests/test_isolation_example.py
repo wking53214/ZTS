@@ -191,7 +191,7 @@ def test_a_reachable_address_fails_and_an_unreachable_one_passes(world):
     listener.bind(("127.0.0.1", 0))
     listener.listen(1)
     open_port = listener.getsockname()[1]
-    threading.Thread(target=lambda: listener.accept(), daemon=True).start()
+    threading.Thread(target=lambda: listener.accept()[0].close(), daemon=True).start()
     closed = socket.socket()
     closed.bind(("127.0.0.1", 0))
     closed_port = closed.getsockname()[1]

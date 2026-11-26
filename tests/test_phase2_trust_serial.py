@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from cleanup_kit import closed_after_test
 from issuer_kit import IssuerKey, trust_doc
 from pg_kit import cluster  # noqa: F401  (session fixture)
 from release_kit import Clock, build, request, run
@@ -282,7 +283,7 @@ def test_recheck_interval_and_store_are_validated(tmp_path, key, bad):
 
 @pytest.fixture
 def pg_store(cluster):
-    s = PostgresSerialStore(cluster.dsn, name="n" + uuid.uuid4().hex[:8], table="s_" + uuid.uuid4().hex[:10])
+    s = closed_after_test(PostgresSerialStore(cluster.dsn, name="n" + uuid.uuid4().hex[:8], table="s_" + uuid.uuid4().hex[:10]))
     yield s
     s.close()
 
@@ -295,14 +296,14 @@ def test_the_database_store_only_moves_forward_and_survives_a_new_client(cluster
         pg_store.record(6, "d6")
     with pytest.raises(TrustRootError, match="two different trust roots"):
         pg_store.record(7, "other")
-    again = PostgresSerialStore(cluster.dsn, name=pg_store._name, table=pg_store._table)
+    again = closed_after_test(PostgresSerialStore(cluster.dsn, name=pg_store._name, table=pg_store._table))
     with pytest.raises(TrustRootError):
         again.record(1, "d1")
     again.close()
 
 
 def test_two_hosts_racing_with_different_roots_under_one_serial_produce_one_winner(cluster, pg_store):
-    other = PostgresSerialStore(cluster.dsn, name=pg_store._name, table=pg_store._table)
+    other = closed_after_test(PostgresSerialStore(cluster.dsn, name=pg_store._name, table=pg_store._table))
     barrier = threading.Barrier(2)
     results = []
 
@@ -321,7 +322,7 @@ def test_two_hosts_racing_with_different_roots_under_one_serial_produce_one_winn
 
 
 def test_two_hosts_loading_the_same_new_root_both_succeed(cluster, pg_store):
-    other = PostgresSerialStore(cluster.dsn, name=pg_store._name, table=pg_store._table)
+    other = closed_after_test(PostgresSerialStore(cluster.dsn, name=pg_store._name, table=pg_store._table))
     barrier = threading.Barrier(2)
     outcomes = []
 
@@ -337,7 +338,7 @@ def test_two_hosts_loading_the_same_new_root_both_succeed(cluster, pg_store):
 
 
 def test_an_unreachable_database_refuses_the_trust_root(tmp_path, key):
-    store = PostgresSerialStore(connect=lambda: (_ for _ in ()).throw(OSError("down")), create=False)
+    store = closed_after_test(PostgresSerialStore(connect=lambda: (_ for _ in ()).throw(OSError("down")), create=False))
     with pytest.raises(TrustRootError, match="did not answer"):
         store.record(1, "d")
     path = tmp_path / "trust.json"

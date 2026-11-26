@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from cleanup_kit import closed_after_test
 from issuer_kit import IssuerKey, StatusService, sign_grant, trust_doc
 from pg_kit import cluster  # noqa: F401
 from release_kit import SCOPE, TEXT, Sink, enforcer, make_identity, run, tap_entries
@@ -60,7 +61,7 @@ class Host:
     def __init__(self, shared: Shared, directory, *, production=True, **overrides):
         directory.mkdir(exist_ok=True)
         self.shared, self.sink = shared, Sink()
-        self.replay = PostgresReplayStore(shared.cluster.dsn, table=shared.table)
+        self.replay = closed_after_test(PostgresReplayStore(shared.cluster.dsn, table=shared.table))
         self.anchor = Rfc3161Anchor(shared.tsa.url, [shared.tsa.pem.read_bytes()], directory / "receipts.jsonl",
                                     min_interval=3600, timeout=5.0)  # lazy: the end-of-release flush does the work
         self.ledger = ValLedger(key=b"l" * 32, store=FileLedgerStore(directory / "ledger.jsonl"), anchor=self.anchor)
@@ -286,7 +287,7 @@ def test_production_validation_refuses_when_a_real_component_is_missing_or_weak(
     empty = TrustRoot.from_dict(trust_doc())
     weak = enforcer.Enforcer(verifier=Ed25519GrantVerifier(empty),
                              revalidator=HttpStatusRevalidator(shared.svc.url, shared.root, ssl_context=shared.svc.client_context()),
-                             replay_store=PostgresReplayStore(shared.cluster.dsn, table=shared.table))
+                             replay_store=closed_after_test(PostgresReplayStore(shared.cluster.dsn, table=shared.table)))
     gate = EnforcerReleaseGate(weak, policy_version="policy-v1", timeout=5.0)
     with pytest.raises(ProductionConfigError, match="no usable grant key"):
         world.make("y", release_gate=gate)

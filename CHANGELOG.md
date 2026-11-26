@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Close the files, sockets and database connections the tests open (P9, 2026-11-26)
+
+- Test-only change; no product or example code changed. With every ResourceWarning shown, a full run reported 153
+  warnings. Every one whose source is test code is fixed:
+  - Files read or written with a bare `open()` in `tests/test_ledger_durable.py` and `tests/test_release_residual.py`
+    now close at once (`Path.read_bytes`/`write_bytes`, and a small `append_bytes` helper).
+  - The test HTTPS servers in `test_receipt_export.py`, `test_receipt_receiver.py` and `test_release_service.py`
+    now release their listening socket (`server_close()` after `shutdown()`); the misbehaving server in
+    `test_phase2_deadlines.py` closes each connection it accepted; the listener in `test_isolation_example.py`
+    closes the connection it accepts; the crash-recovery test closes the killed host's output pipes.
+  - Replay and serial stores the PostgreSQL tests create are registered with `tests/cleanup_kit.py` and closed
+    when the test ends, as P6 did for SQLite.
+- Result: 153 reports down to 81. The rest come from outside the tests and are left for separate decisions: the
+  PostgreSQL replay store's close step closes only the calling thread's connection, and a store whose constructor
+  refuses a table does not release the connection it opened (`src/zts/replay_postgres.py`); the example release
+  service leaves its credential file and one socket open (`examples/release_service/`); and the shared HTTPS helper
+  leaves a socket object, already closed underneath, when an answer is too large (`src/zts/_http.py`).
+- Regression guard: `test_ledger_durable.py` and `test_release_residual.py` now fail any test that leaves a file
+  for the garbage collector. With the old file handling, 17 of their 44 tests fail under the guard. A suite-wide
+  guard, like P6's for SQLite, can follow once the non-test sources above are fixed.
+
 ### Two more cancel tests made deterministic (P8, 2026-11-26)
 
 - Test-only change in `tests/test_release_async.py`; no product code changed. The tests for cancelling while the

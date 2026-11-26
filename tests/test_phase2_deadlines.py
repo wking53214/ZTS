@@ -64,6 +64,7 @@ class Misbehaving:
             threading.Thread(target=self._handle, args=(raw,), daemon=True).start()
 
     def _handle(self, raw) -> None:
+        conn = raw
         try:
             if self.behaviour == "stall":  # never speaks: a TLS client waits for the server's hello
                 raw.settimeout(0.2)
@@ -96,6 +97,9 @@ class Misbehaving:
                 time.sleep(self.interval)
         except (OSError, ssl.SSLError):
             self.client_gone.set()  # our send or recv failed: the client closed the connection
+        finally:
+            conn.close()  # the TLS wrapper when there is one; closing it closes the socket it took over
+            raw.close()
 
 
 def timed(fn):

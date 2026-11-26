@@ -14,6 +14,7 @@ import os
 import stat
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
 
@@ -25,7 +26,20 @@ from zts.ledger_store import (
     LedgerStoreError,
 )
 
+# A file this module opens and leaves for the garbage collector fails the test that opened it (P9). CPython closes
+# such a file the moment the last reference goes, inside the test, so the failure names the right test.
+pytestmark = [
+    pytest.mark.filterwarnings("error:unclosed file:ResourceWarning"),
+    pytest.mark.filterwarnings("error:Exception ignored in. <_io\\.:pytest.PytestUnraisableExceptionWarning"),
+]
+
 KEY = b"k" * 32
+
+
+def append_bytes(path, data):
+    """Append raw bytes to a file and close it (a bare open().write() leaves the file to the garbage collector)."""
+    with open(path, "ab") as f:
+        f.write(data)
 
 
 def open_ledger(path, anchor=None):
@@ -109,7 +123,7 @@ def test_an_unacknowledged_torn_tail_is_removed_reported_and_kept_for_inspection
     recovered = open_ledger(path)
     assert len(recovered) == 4 and recovered.verify()[0]
     assert recovered.recovery.torn_tail_bytes > 0
-    assert open(recovered.recovery.torn_copy, "rb").read().startswith(b'{"sequence": 4')
+    assert Path(recovered.recovery.torn_copy).read_bytes().startswith(b'{"sequence": 4')
     assert recovered.head == ledger.head
     recovered.log("T", "OK", "continues")
     assert open_ledger(path).verify()[0]
@@ -125,7 +139,7 @@ def test_repair_can_be_refused(tmp_path):
 
 
 def lines(path):
-    return open(path, "rb").read().splitlines(keepends=True)
+    return Path(path).read_bytes().splitlines(keepends=True)
 
 
 def test_a_mutated_line_refuses_to_open_and_is_not_repaired(tmp_path):
@@ -135,10 +149,10 @@ def test_a_mutated_line_refuses_to_open_and_is_not_repaired(tmp_path):
     doc = json.loads(rows[1])
     doc["detail"] = "edited"
     rows[1] = (json.dumps(doc, sort_keys=True) + "\n").encode()
-    open(path, "wb").write(b"".join(rows))
+    Path(path).write_bytes(b"".join(rows))
     with pytest.raises(LedgerCorruptionError, match="digest mismatch"):
         open_ledger(path)
-    assert b"edited" in open(path, "rb").read(), "corruption must be left in place, not healed"
+    assert b"edited" in Path(path).read_bytes(), "corruption must be left in place, not healed"
 
 
 def test_a_deleted_middle_line_refuses_to_open(tmp_path):
@@ -146,7 +160,7 @@ def test_a_deleted_middle_line_refuses_to_open(tmp_path):
     fill(open_ledger(path), 5)
     rows = lines(path)
     del rows[2]
-    open(path, "wb").write(b"".join(rows))
+    Path(path).write_bytes(b"".join(rows))
     with pytest.raises(LedgerCorruptionError):
         open_ledger(path)
 
@@ -154,7 +168,7 @@ def test_a_deleted_middle_line_refuses_to_open(tmp_path):
 def test_a_garbage_line_refuses_to_open(tmp_path):
     path = tmp_path / "ledger.jsonl"
     fill(open_ledger(path), 3)
-    open(path, "ab").write(b"this is not json\n")
+    append_bytes(path, b"this is not json\n")
     with pytest.raises(LedgerCorruptionError):
         open_ledger(path)
 
@@ -180,7 +194,7 @@ def test_truncating_the_tail_of_the_file_is_caught_by_the_anchor(tmp_path, dropp
     ledger, anchor = anchored(tmp_path)
     path = tmp_path / "ledger.jsonl"
     rows = lines(path)
-    open(path, "wb").write(b"".join(rows[:-dropped]))
+    Path(path).write_bytes(b"".join(rows[:-dropped]))
     victim = open_ledger(path, FileLedgerAnchor(tmp_path / "anchor.jsonl"))
     assert victim.verify()[0] is True, "a walk alone sees nothing wrong with a shortened chain"
     ok, reason = victim.verify_anchored()
@@ -190,9 +204,9 @@ def test_truncating_the_tail_of_the_file_is_caught_by_the_anchor(tmp_path, dropp
 def test_rolling_the_whole_file_back_to_an_older_copy_is_caught(tmp_path):
     ledger, anchor = anchored(tmp_path, 3)
     path = tmp_path / "ledger.jsonl"
-    old = open(path, "rb").read()
+    old = Path(path).read_bytes()
     fill(ledger, 4)
-    open(path, "wb").write(old)
+    Path(path).write_bytes(old)
     ok, reason = open_ledger(path, FileLedgerAnchor(tmp_path / "anchor.jsonl")).verify_anchored()
     assert ok is False and "truncated" in reason
 
@@ -205,7 +219,7 @@ def test_rewriting_the_tail_into_another_valid_chain_is_caught(tmp_path):
     for row in keep:  # rebuild the first four, then a different fifth
         forged._entries.append(__import__("zts.ledger_store", fromlist=["x"]).entry_from_line(row))
     forged.log("T", "OK", "a different fifth entry")
-    open(path, "wb").write(b"".join(keep) + (json.dumps(
+    Path(path).write_bytes(b"".join(keep) + (json.dumps(
         __import__("dataclasses").asdict(forged.entries[-1]), sort_keys=True) + "\n").encode())
     victim = open_ledger(path, FileLedgerAnchor(tmp_path / "anchor.jsonl"))
     assert victim.verify()[0] is True
@@ -222,13 +236,13 @@ def test_an_anchor_that_is_missing_or_empty_for_a_nonempty_ledger_fails(tmp_path
 
 def test_a_corrupt_anchor_fails_verification_instead_of_passing(tmp_path):
     ledger, anchor = anchored(tmp_path)
-    open(tmp_path / "anchor.jsonl", "ab").write(b"garbage\n")
+    append_bytes(tmp_path / "anchor.jsonl", b"garbage\n")
     assert ledger.verify_anchored() == (False, "anchor unavailable")
 
 
 def test_a_torn_anchor_line_was_never_acknowledged_and_is_ignored(tmp_path):
     ledger, anchor = anchored(tmp_path)
-    open(tmp_path / "anchor.jsonl", "ab").write(b'{"head": "abc", "sequ')
+    append_bytes(tmp_path / "anchor.jsonl", b'{"head": "abc", "sequ')
     assert ledger.verify_anchored()[0] is True
 
 
@@ -257,7 +271,7 @@ def test_an_anchor_that_refuses_stops_the_durable_write(tmp_path):
     ledger = ValLedger(key=KEY, store=FileLedgerStore(tmp_path / "ledger.jsonl"), anchor=Down())
     with pytest.raises(LedgerAnchorError):
         ledger.log("T", "OK", "x")
-    assert len(ledger) == 0 and open(tmp_path / "ledger.jsonl", "rb").read() == b""
+    assert len(ledger) == 0 and Path(tmp_path / "ledger.jsonl").read_bytes() == b""
 
 
 # ------------------------------------------------------------ concurrency
@@ -321,7 +335,7 @@ def test_an_entry_spliced_in_from_another_chain_is_caught_by_the_link_check(tmp_
     rows = lines(path)
     import dataclasses
     rows[2] = (json.dumps(dataclasses.asdict(other.entries[2]), sort_keys=True) + "\n").encode()
-    open(path, "wb").write(b"".join(rows))
+    Path(path).write_bytes(b"".join(rows))
     with pytest.raises(LedgerCorruptionError, match="broken link"):
         open_ledger(path)
 
@@ -331,7 +345,7 @@ def test_a_running_ledger_refuses_to_append_after_the_file_was_truncated_under_i
     path = tmp_path / "ledger.jsonl"
     ledger = fill(open_ledger(path), 5)
     rows = lines(path)
-    open(path, "wb").write(b"".join(rows[:2]))
+    Path(path).write_bytes(b"".join(rows[:2]))
     with pytest.raises(LedgerCorruptionError, match="truncated"):
         ledger.log("T", "OK", "after truncation")
     assert len(lines(path)) == 2, "nothing was appended to the truncated file"

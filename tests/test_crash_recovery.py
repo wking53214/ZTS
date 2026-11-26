@@ -24,6 +24,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from cleanup_kit import closed_after_test
 from issuer_kit import IssuerKey, StatusService, sign_grant, trust_doc  # skips this module without cryptography
 from cryptography.hazmat.primitives import serialization  # noqa: I001
 from pg_kit import cluster  # noqa: F401  (session fixture)
@@ -93,7 +94,7 @@ def test_a_host_killed_mid_delivery_leaves_a_verifiable_ledger_a_spent_grant_and
         assert unfinished_releases(ledger) == [rid], "and the operator's helper finds exactly that release"
 
         # ---- the grant is spent: the same one cannot be used again, by anyone
-        store = PostgresReplayStore(cluster.dsn, table=table, create=False)
+        store = closed_after_test(PostgresReplayStore(cluster.dsn, table=table, create=False))
         assert store.consume("issuer-a", "nonce-" + rid, rid) is False
         enf = enforcer.Enforcer(
             verifier=Ed25519GrantVerifier(root), replay_store=store,
@@ -126,5 +127,8 @@ def test_a_host_killed_mid_delivery_leaves_a_verifiable_ledger_a_spent_grant_and
     finally:
         if host.poll() is None:
             host.kill()
+            host.wait(timeout=10)
+        host.stdout.close()
+        host.stderr.close()
         svc.close()
         tsa.close()

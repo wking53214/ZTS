@@ -234,6 +234,7 @@ def test_the_zts_exporter_delivers_to_the_receiver_over_tls_including_a_resend(t
         assert len(list((tmp_path / "bucket").iterdir())) == 3
     finally:
         server.shutdown()
+        server.server_close()
         tsa.close()
 
 

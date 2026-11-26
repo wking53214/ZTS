@@ -57,6 +57,7 @@ class Destination:
 
     def close(self):
         self.server.shutdown()
+        self.server.server_close()
 
 
 @pytest.fixture
