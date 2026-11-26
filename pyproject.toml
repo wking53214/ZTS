@@ -49,6 +49,13 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+# A SQLite connection left open by a test fails the suite. Python reports it when the connection is
+# garbage collected, which can be during a later test, so the failure may name a test that only
+# happened to run next: look for the store that test's neighbours opened. tests/cleanup_kit.py closes them.
+filterwarnings = [
+    "error:unclosed database:ResourceWarning",
+    "error:Exception ignored in. <sqlite3\\.Connection:pytest.PytestUnraisableExceptionWarning",
+]
 
 [tool.ruff.lint.per-file-ignores]
 # A fixture imported from a helper module and then named as a test argument is how pytest shares fixtures.

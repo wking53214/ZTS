@@ -12,6 +12,7 @@ import logging
 
 import pytest
 
+from cleanup_kit import closed_after_test
 from release_kit import (
     TEXT, HmacVerifier, Sink, StatusSource, build, enforcer, request, run,
 )
@@ -103,7 +104,7 @@ def production_parts(tmp_path, **over):
     clock = __import__("release_kit").Clock()
     verifier = type("V", (HmacVerifier,), {"verifier_id": "acme/proof-verifier"})()
     status = type("S", (StatusSource,), {"revalidator_id": "acme/status"})(clock)
-    store = enforcer.SQLiteReplayStore(tmp_path / "replay.db")
+    store = closed_after_test(enforcer.SQLiteReplayStore(tmp_path / "replay.db"))
     gate_enforcer = enforcer.Enforcer(verifier=verifier, revalidator=status, replay_store=store, clock=clock)
     options = dict(
         release_gate=EnforcerReleaseGate(gate_enforcer, policy_version="p1", timeout=5.0),
@@ -160,7 +161,9 @@ def test_production_refuses_a_gate_with_no_timeout(tmp_path):
 
 def test_production_refuses_enforcers_reject_everything_defaults(tmp_path):
     parts = production_parts(tmp_path)
-    gate = EnforcerReleaseGate(enforcer.Enforcer(), policy_version="p1", timeout=5.0)
+    defaults = enforcer.Enforcer()
+    closed_after_test(defaults._replay_store)  # the in-memory store it opened for itself
+    gate = EnforcerReleaseGate(defaults, policy_version="p1", timeout=5.0)
     with pytest.raises(ProductionConfigError, match="proof_verifier.*reject-all|reject-all"):
         DeterministicIntegrityTower("ops", **{**parts, "release_gate": gate})
 
@@ -179,7 +182,7 @@ def test_production_refuses_an_in_memory_replay_store(tmp_path):
     verifier = type("V", (HmacVerifier,), {"verifier_id": "acme/proof-verifier"})()
     status = type("S", (StatusSource,), {"revalidator_id": "acme/status"})(clock)
     weak = enforcer.Enforcer(verifier=verifier, revalidator=status,
-                             replay_store=enforcer.SQLiteReplayStore(":memory:"), clock=clock)
+                             replay_store=closed_after_test(enforcer.SQLiteReplayStore(":memory:")), clock=clock)
     with pytest.raises(ProductionConfigError, match="in-memory SQLite"):
         DeterministicIntegrityTower("ops", **{**parts, "release_gate": EnforcerReleaseGate(weak, policy_version="p1", timeout=5.0)})
 
