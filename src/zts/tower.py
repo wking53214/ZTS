@@ -304,18 +304,23 @@ class DeterministicIntegrityTower:
             ))
             budget_task = asyncio.create_task(self.kg.pace(intake))
 
+            # Guarded: `result` was just assigned a SieveResult on this line. The type checker does
+            # not narrow a variable declared "SieveResult | None" through this tuple assignment, so
+            # the uses below are marked. (The loop runs at least once: max_retries >= 1 is checked
+            # when the tower is built.)
             result, budget = await asyncio.gather(sieve_task, budget_task)
             budget_seconds = budget.seconds
-            history.append(result.payload_out)
-            self._log_sieve(result)
+            history.append(result.payload_out)  # type: ignore[union-attr]
+            self._log_sieve(result)  # type: ignore[arg-type]
 
-            if result.verdict is not Verdict.BREACH:
+            if result.verdict is not Verdict.BREACH:  # type: ignore[union-attr]
                 break
 
+            # Guarded: `result` is this iteration's SieveResult (see the gather above).
             blocking = sorted(
                 {
                     f.gate
-                    for f in result.findings
+                    for f in result.findings  # type: ignore[union-attr]
                     if f.verdict is Verdict.BREACH
                 },
                 key=lambda g: g.value.gate_id,
@@ -323,7 +328,8 @@ class DeterministicIntegrityTower:
             if not blocking:
                 break
 
-            working_prompt = self._rewrite_prompt(prompt, result.payload_out, blocking)
+            # Guarded: `result` is this iteration's SieveResult (see the gather above).
+            working_prompt = self._rewrite_prompt(prompt, result.payload_out, blocking)  # type: ignore[union-attr]
 
         assert result is not None
         # One release attempt, for the final result only. A retry that produced

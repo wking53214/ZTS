@@ -117,7 +117,7 @@ def _summarize(label: str, order: tuple[Gate, ...], samples: list[float], execut
     )
 
 
-def run_bench(iterations: int = 20000, mode: str = "reject") -> dict[str, BenchResult]:
+def run_bench(iterations: int = 20000, mode: str = "reject") -> dict[str, BenchResult | str]:
     """Run fail-fast ordering against worst-case ordering."""
     fail_fast = FAIL_FAST_ORDER
     worst_case = tuple(reversed(FAIL_FAST_ORDER))
@@ -137,7 +137,7 @@ def run_bench(iterations: int = 20000, mode: str = "reject") -> dict[str, BenchR
 
 def run_bench_with_expensive_semantics(
     iterations: int = 200, semantic_delay_ms: float = 5.0, mode: str = "reject"
-) -> dict[str, BenchResult]:
+) -> dict[str, BenchResult | str]:
     """Re-run with the semantic gates made expensive.
 
     Stands in for G2/G4 backed by a model call rather than a regex. This is the

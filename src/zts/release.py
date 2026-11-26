@@ -496,7 +496,8 @@ class EnforcerReleaseGate:
                 request_id=request.release_id,
                 parameters_sha256=hashlib.sha256(
                     release_parameters_bytes(
-                        canonical_representation=request.artifact.canonical_representation,
+                        # Guarded: _check_identity above denies unless this is a non-empty str.
+                        canonical_representation=request.artifact.canonical_representation,  # type: ignore[arg-type]
                         profile=profile,
                     )
                 ).hexdigest(),
@@ -509,7 +510,8 @@ class EnforcerReleaseGate:
 
         state.candidate = ReleaseCandidate(
             release_id=request.release_id,
-            subject_digest=request.artifact.subject_digest,
+            # Guarded: _check_identity above denies unless this is a 64-character hex str.
+            subject_digest=request.artifact.subject_digest,  # type: ignore[arg-type]
             artifact_sha256=envelope.evidence_sha256,
             operation=request.operation,
             scope=request.scope,
@@ -545,7 +547,8 @@ class EnforcerReleaseGate:
             if cancelled is not None and cancelled():
                 raise ReleaseAbort(ReleaseReason.CANCELLED)
             # Last-moment rebinding to the policy this envelope was built under, and to CNS.
-            if self._policy_version != state.candidate.policy_version:
+            # Guarded: state.candidate is set above, before Enforcer can call guarded().
+            if self._policy_version != state.candidate.policy_version:  # type: ignore[union-attr]
                 raise ReleaseAbort(ReleaseReason.POLICY_CHANGED)
             try:
                 self._check_identity(request)

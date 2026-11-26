@@ -23,6 +23,9 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=7.4"]
+# Static checks run in CI: the type checker and coverage reporting. Pinned exactly, so a new release
+# of either cannot change the result without a deliberate bump here.
+static = ["mypy==2.4.1", "pytest-cov==7.1.0", "coverage==7.17.5"]
 # Optional: the CNS dock (zts.cns). Nothing else in ZTS imports CNS, and ZTS runs without it.
 cns = ["cns @ git+https://github.com/wking53214/CNS.git@v4.1.0"]
 # Optional: the Enforcer release adapter (zts.release). Pinned to a commit because
@@ -50,3 +53,30 @@ pythonpath = ["src"]
 [tool.ruff.lint.per-file-ignores]
 # A fixture imported from a helper module and then named as a test argument is how pytest shares fixtures.
 "tests/*" = ["F811"]
+
+[tool.mypy]
+# Checks src/zts. Run as: mypy (from the repository root, with the production and static extras installed).
+files = ["src/zts"]
+python_version = "3.11"
+# Every "type: ignore" in src marks a spot that is guarded at runtime and says how; one that stops
+# being needed is reported, so stale ones cannot pile up.
+warn_unused_ignores = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+# Third-party packages that ship no type information (no py.typed marker, no stubs).
+module = ["enforcer", "enforcer.*", "asn1crypto", "asn1crypto.*"]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+branch = true
+source = ["zts"]
+
+[tool.coverage.report]
+# The floor: branch coverage was 94.2% on 2026-11-26 with the root-only tests skipped, as CI skips
+# them. It is set at the 94% recorded in the 2026-11-25 baseline, so one timing-dependent branch
+# cannot fail the job by itself. Raise it, never lower it, when coverage rises.
+fail_under = 94.0
+precision = 1
+show_missing = false
+skip_covered = true

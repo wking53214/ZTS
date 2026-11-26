@@ -44,6 +44,7 @@ from .ledger import GENESIS, LedgerEntry
 try:  # POSIX
     import fcntl
 except ImportError:  # pragma: no cover - exercised only off POSIX
+    # Guarded: _require_posix() refuses to open the durable store when fcntl is None.
     fcntl = None  # type: ignore[assignment]
 
 

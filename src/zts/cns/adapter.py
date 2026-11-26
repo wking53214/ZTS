@@ -56,9 +56,12 @@ class CNSDock:
     """
 
     def __init__(self) -> None:
-        self._cns = None
-        self._cns_digest = None
-        self._cns_version = None
+        # Typed Any on purpose: they hold CNS's own types, imported lazily by connect(), and
+        # stay None until then. Every method that reads them calls validate_contract() first,
+        # which connects, so none of them is read while still None.
+        self._cns: Any = None
+        self._cns_digest: Any = None
+        self._cns_version: str | None = None
 
     def connect(self) -> None:
         """Import the canonical CNS contract lazily."""

@@ -265,7 +265,10 @@ class ValLedger:
                 newest = self._entries[-1]
             reason = behind(newest.sequence)
             if reason is not None and catch_up:
-                self._anchor.catch_up(newest.sequence, newest.digest)
+                # Guarded: an anchor is present (it supplied `behind`), and catch_up is an optional
+                # extension of LedgerAnchor; an anchor without it raises here, which the except
+                # below turns into "unverifiable" (fail closed).
+                self._anchor.catch_up(newest.sequence, newest.digest)  # type: ignore[union-attr]
                 reason = behind(newest.sequence)
             return reason
         except Exception:

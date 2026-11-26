@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Static checks in CI (P4, 2026-11-26)
+
+- **Type checker.** mypy (pinned in a new `static` extra, settings in `pyproject.toml`) runs over `src/zts` in a
+  new `typecheck` CI job. It reported 17 findings, plus 4 notes that two third-party packages ship no type
+  information (`enforcer`, `asn1crypto`; now set to be skipped). Sorted:
+  - Real fix (2): `run_bench` and `run_bench_with_expensive_semantics` declared they return only `BenchResult`
+    values, but the dict also holds the `"mode"` string. The declared type now says so.
+  - Guarded at runtime, annotated instead of restructured (15): the CNS dock's lazily loaded CNS types (typed
+    `Any`; every reader connects first), two artifact fields that `_check_identity` refuses unless they are
+    non-empty strings, the release candidate set before Enforcer can call back, the anchor's optional
+    `catch_up` (a missing one fails closed as "unverifiable"), and five uses of the sieve result inside the retry
+    loop that the checker cannot narrow. Each carries a `Guarded:` comment saying how.
+  - `warn_unused_ignores` is on, so an annotation that stops being needed is reported.
+- **Coverage.** A new `coverage` CI job runs the whole suite against the real stack with branch coverage and fails
+  below a floor of 94% (`fail_under` in `pyproject.toml`). Measured 94.2% with the root-only tests skipped, as CI
+  skips them.
+- `tests/test_static_checks.py` holds the configuration and the rule that every `type: ignore` in `src` is a
+  documented runtime guard. It needs neither tool, so it never skips.
+
+Noted, not fixed: the "unclosed database" ResourceWarnings during tests (508 in a full run) do not come from CNS.
+Every one is a SQLite connection opened by Enforcer's `SQLiteReplayStore` (`enforcer/replay.py`) that the ZTS
+test helpers create and never close (460 from `tests/release_kit.py`, the rest from a few test files). The store
+has a `close()` method, so the fix belongs to this repository's tests, not to CNS or Enforcer.
+
 ### Housekeeping: the CNS pin and the identity statement (P3, 2026-11-26)
 
 - Stale notes called CNS 2.3.0 "the pin" (INSPECTED at `9784786`): the comment in `src/zts/cns/adapter.py`, the
