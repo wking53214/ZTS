@@ -53,6 +53,39 @@ async def cancel_after(stack, delay, req):
     return task.result()
 
 
+async def cancel_once(stack, began, go, req, generator=None):
+    """Cancel only after revalidation has begun, and let revalidation finish only after the cancel landed.
+
+    No wall-clock guess: `began` is set by the status source when revalidation starts, so a slow machine
+    cannot make the cancel arrive before the release is attempted (which wrote nothing to the ledger and
+    failed CI with IndexError). The status source then waits on `go`. Delivering a cancel takes the
+    cancelled task one turn of the event loop, where the tower sets its cancel flag; `go` is released
+    only after several more turns, so the flag is set before revalidation returns.
+    """
+    task = asyncio.create_task(stack.tower.run("p", generator or gen, release=req))
+    assert await asyncio.to_thread(began.wait, 10), "revalidation never started"
+    task.cancel()
+    for _ in range(10):
+        await asyncio.sleep(0)
+    go.set()
+    try:
+        await task
+    except asyncio.CancelledError:
+        return "cancelled"
+    return task.result()
+
+
+def hold_revalidation(stack):
+    began, go = threading.Event(), threading.Event()
+
+    def on_call():
+        began.set()
+        go.wait(10)
+
+    stack.status.on_call = on_call
+    return began, go
+
+
 # -------------------------------------------------------- the loop is not blocked
 
 
@@ -100,8 +133,8 @@ def test_cancelling_while_the_grant_is_being_fetched_spends_nothing_and_delivers
 
 def test_cancelling_during_revalidation_stops_before_delivery_and_the_grant_is_spent(tmp_path):
     s = build(tmp_path)
-    s.status.on_call = lambda: time.sleep(0.4)
-    outcome = asyncio.run(cancel_after(s, 0.1, request(s)))
+    began, go = hold_revalidation(s)
+    outcome = asyncio.run(cancel_once(s, began, go, request(s)))
     assert outcome == "cancelled"
     assert s.sink.calls == [], "cancelled before the callback: nothing may be delivered"
     last = tap_entries(s)[-1]
@@ -111,6 +144,23 @@ def test_cancelling_during_revalidation_stops_before_delivery_and_the_grant_is_s
     retry = run(s, "sync", request(s))
     assert retry.reason_code == "GRANT_REPLAYED" and retry.released is False
     assert s.sink.calls == []
+
+
+def test_cancelling_during_revalidation_holds_when_the_run_is_slow_to_get_there(tmp_path):
+    # Regression for the CI flake: a run slower than the old fixed 0.1 s cancel delay to reach revalidation.
+    # With that delay the cancel landed before any release attempt and the ledger had no entry to check.
+    s = build(tmp_path)
+    began, go = hold_revalidation(s)
+
+    async def slow_to_start(prompt):
+        await asyncio.sleep(0.3)
+        return TEXT
+
+    outcome = asyncio.run(cancel_once(s, began, go, request(s), generator=slow_to_start))
+    assert outcome == "cancelled" and s.sink.calls == []
+    last = tap_entries(s)[-1]
+    assert last.extra["reason_code"] == "RELEASE_CANCELLED" and last.extra["grant_state"] == "spent"
+    assert last.extra["authorized"] is True and last.extra["action_started"] is False
 
 
 def test_cancelling_during_delivery_cannot_be_undone_and_cannot_be_repeated(tmp_path):
