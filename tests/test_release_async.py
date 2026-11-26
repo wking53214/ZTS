@@ -38,29 +38,48 @@ def slow_provider(stack, delay, **overrides):
     return provide
 
 
+class HeldSink(Sink):
+    """A delivery that signals `began` when it starts and finishes only once `go` is set."""
+
+    def __init__(self):
+        super().__init__()
+        self.began, self.go = threading.Event(), threading.Event()
+
+    def __call__(self, output, signature):
+        self.began.set()
+        self.go.wait(10)
+        super().__call__(output, signature)
+
+
+def held_provider(stack, began, go):
+    """A grant source that signals `began` when the fetch starts and answers only once `go` is set."""
+    def provide(candidate):
+        stack.candidates.append(candidate)
+        began.set()
+        go.wait(10)
+        return mint(ActionEnvelope.from_canonical_bytes(candidate.envelope_bytes), stack.clock)
+    return provide
+
+
 async def gen(prompt):
     return TEXT
 
 
-async def cancel_after(stack, delay, req):
-    task = asyncio.create_task(stack.tower.run("p", gen, release=req))
-    await asyncio.sleep(delay)
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        return "cancelled"
-    return task.result()
+async def slow_generator(prompt):
+    """A generator slower than the old fixed cancel delays (0.1 s and 0.2 s) to hand over its text."""
+    await asyncio.sleep(0.3)
+    return TEXT
 
 
 async def cancel_once(stack, began, go, req, generator=None):
-    """Cancel only after revalidation has begun, and let revalidation finish only after the cancel landed.
+    """Cancel only after a held step has begun, and let that step finish only after the cancel landed.
 
-    No wall-clock guess: `began` is set by the status source when revalidation starts, so a slow machine
+    The held step is revalidation (`hold_revalidation`), the grant fetch (`held_provider`) or delivery
+    (`HeldSink`). No wall-clock guess: `began` is set by the held step when it starts, so a slow machine
     cannot make the cancel arrive before the release is attempted (which wrote nothing to the ledger and
-    failed CI with IndexError). The status source then waits on `go`. Delivering a cancel takes the
+    failed CI with IndexError). The held step then waits on `go`. Delivering a cancel takes the
     cancelled task one turn of the event loop, where the tower sets its cancel flag; `go` is released
-    only after several more turns, so the flag is set before revalidation returns.
+    only after several more turns, so the flag is set before the held step returns.
     """
     task = asyncio.create_task(stack.tower.run("p", generator or gen, release=req))
     assert await asyncio.to_thread(began.wait, 10), "revalidation never started"
@@ -118,9 +137,15 @@ def test_a_slow_dependency_does_not_freeze_the_event_loop(tmp_path, where):
 # -------------------------------------------------------------- cancellation
 
 
-def test_cancelling_while_the_grant_is_being_fetched_spends_nothing_and_delivers_nothing(tmp_path):
+@pytest.mark.parametrize("generator", [gen, slow_generator], ids=["prompt", "slow-to-start"])
+def test_cancelling_while_the_grant_is_being_fetched_spends_nothing_and_delivers_nothing(tmp_path, generator):
+    # The cancel lands while the grant fetch is held open, never on a fixed delay. The slow-to-start case is the
+    # regression: with the old fixed 0.1 s delay the cancel landed during generation, before any release attempt,
+    # and the ledger had no entry to check (IndexError).
     s = build(tmp_path)
-    outcome = asyncio.run(cancel_after(s, 0.1, request(s, provider=slow_provider(s, 0.4))))
+    began, go = threading.Event(), threading.Event()
+    req = request(s, provider=held_provider(s, began, go))
+    outcome = asyncio.run(cancel_once(s, began, go, req, generator=generator))
     assert outcome == "cancelled"
     assert s.sink.calls == []
     last = tap_entries(s)[-1]
@@ -163,10 +188,13 @@ def test_cancelling_during_revalidation_holds_when_the_run_is_slow_to_get_there(
     assert last.extra["authorized"] is True and last.extra["action_started"] is False
 
 
-def test_cancelling_during_delivery_cannot_be_undone_and_cannot_be_repeated(tmp_path):
-    sink = SlowSink(0.5)
+@pytest.mark.parametrize("generator", [gen, slow_generator], ids=["prompt", "slow-to-start"])
+def test_cancelling_during_delivery_cannot_be_undone_and_cannot_be_repeated(tmp_path, generator):
+    # The cancel lands while delivery is held open, never on a fixed delay. The slow-to-start case is the
+    # regression: with the old fixed 0.2 s delay the cancel landed during generation and nothing was delivered.
+    sink = HeldSink()
     s = build(tmp_path, sink=sink)
-    outcome = asyncio.run(cancel_after(s, 0.2, request(s)))
+    outcome = asyncio.run(cancel_once(s, sink.began, sink.go, request(s), generator=generator))
     assert outcome == "cancelled", "the caller is told the outcome was not returned"
     assert len(sink.calls) == 1, "delivery had begun and ran to completion"
     final = tap_entries(s)[-1]

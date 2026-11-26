@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Two more cancel tests made deterministic (P8, 2026-11-26)
+
+- Test-only change in `tests/test_release_async.py`; no product code changed. The tests for cancelling while the
+  grant is being fetched and cancelling during delivery no longer cancel after a fixed delay (0.1 s against a
+  0.4 s grant source, 0.2 s against a 0.5 s delivery). The grant source and the delivery now signal when they
+  start and wait for a go-ahead; the test cancels on that signal, then gives the go-ahead. Same pattern as the
+  revalidation cancel test fixed in P5. Neither test had failed in CI.
+- Regression: each test also runs with a generator that takes 0.3 s to hand over its text, longer than the old
+  delays. With the old fixed delays both of those cases fail (the grant case with IndexError, because the cancel
+  landed before any release attempt; the delivery case with nothing delivered). The unused fixed-delay helper
+  `cancel_after` is removed.
+
 ### Paragraph breaks are kept in delivered text (P7, 2026-11-26)
 
 - Owner decision: a blank line between paragraphs now survives the whitespace cleanup (`tidy` in
