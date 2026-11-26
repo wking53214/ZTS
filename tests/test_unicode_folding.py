@@ -75,6 +75,33 @@ class TestDeliveredText:
         out = ZeroTrustSieve("ops").run("As an\nAI, the logs show errors.\nDisk full.").payload_out
         assert "\n" in out and "AI" not in out
 
+    # P7 (owner decision 2026-11-26): a blank line between paragraphs is kept. Before, the whitespace cleanup
+    # turned it into a single space, so two paragraphs arrived as one.
+    def test_a_blank_line_between_paragraphs_is_kept(self):
+        out = ZeroTrustSieve("ops").run("Disk at 94%.\n\nNode 3 down.").payload_out
+        assert out == "Disk at 94%.\n\nNode 3 down."
+
+    @pytest.mark.parametrize("gap", ["\n\n\n", "\n\n\n\n", "\n \n", " \n\n\t", "\r\n\r\n"])
+    def test_any_gap_holding_a_blank_line_becomes_exactly_one_blank_line(self, gap):
+        out = ZeroTrustSieve("ops").run(f"Disk at 94%.{gap}Node 3 down.").payload_out
+        assert out == "Disk at 94%.\n\nNode 3 down."
+
+    @pytest.mark.parametrize("gap", ["  ", "\t\t", " \t ", "  "])
+    def test_other_runs_of_whitespace_still_become_one_space(self, gap):
+        out = ZeroTrustSieve("ops").run(f"Disk at 94%.{gap}Node 3 down.").payload_out
+        assert out == "Disk at 94%. Node 3 down."
+
+    def test_the_tower_delivers_the_paragraph_break(self):
+        from zts.capstone import ArchitectsProtocol, ReleaseMode
+        from zts.tower import DeterministicIntegrityTower
+
+        text = "Disk at 94%.\n\nNode 3 down."
+        result = DeterministicIntegrityTower("ops", capstone=ArchitectsProtocol(ReleaseMode.AUTO)).enforce(text)
+        assert result.released and result.output == text
+
+    def test_a_blank_line_does_not_hide_a_phrase_from_the_gates(self):
+        assert Gate.G1 in gates_hit("logic >\n\nmeaning")
+
     def test_delivered_text_is_normalized(self):
         out = ZeroTrustSieve("ops").run(fullwidth("Disk") + "\u00a0full on caf\u00e9 node.").payload_out
         assert out == "Disk full on cafe node."
