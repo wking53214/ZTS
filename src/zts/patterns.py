@@ -8,6 +8,10 @@ enough to run ahead of the semantic ones.
 
 Every pattern below is reproduced from the archived v13.0 cache. Additions made
 during reconstruction are marked RECONSTRUCTED and listed in PROVENANCE.md.
+
+One change to the archived text (2026-11-25): inside a multi-word phrase, the space is
+written as "any run of whitespace", so a line break or tab inside "as an AI" does not
+hide it. The words themselves are unchanged.
 """
 
 from __future__ import annotations
@@ -25,14 +29,14 @@ PPA: Final = re.compile(
 
 #: G3 / SBF - epistemic hedges and softeners.
 SBF: Final = re.compile(
-    r"\b(may|might|could|seems|generally|potentially|likely|perhaps|maybe|probably|i think)\b",
+    r"\b(may|might|could|seems|generally|potentially|likely|perhaps|maybe|probably|i\s+think)\b",
     re.IGNORECASE,
 )
 
 #: G5 / SND - mechanical flattery and assistant-voice tells.
 SND: Final = re.compile(
-    r"\b(great point|excellent point|great work|i agree|as an ai|certainly|"
-    r"you are correct|you're correct|good question|happy to help)\b",
+    r"\b(great\s+point|excellent\s+point|great\s+work|i\s+agree|as\s+an\s+ai|certainly|"
+    r"you\s+are\s+correct|you're\s+correct|good\s+question|happy\s+to\s+help)\b",
     re.IGNORECASE,
 )
 
@@ -67,7 +71,7 @@ ABSTRACT_VERBS: Final = re.compile(
 
 #: Conversational puffery removed by the SBF transform stage.
 PUFFERY: Final = re.compile(
-    r"\b(honestly|humbly|actually|basically|really|just|very|please|thank you)\b",
+    r"\b(honestly|humbly|actually|basically|really|just|very|please|thank\s+you)\b",
     re.IGNORECASE,
 )
 

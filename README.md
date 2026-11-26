@@ -125,6 +125,25 @@ Two limits of the filters were found on 2026-11-18 (EXECUTED) and fixed on 2026-
 - **In the `default` and `exec` profiles the instruction-override gate (G1) is advisory.** It records a finding
   and does not block (see "Profiles").
 
+More bypasses were found on 2026-11-25 (EXECUTED at `9784786`, ops profile) and fixed the same day:
+fullwidth letters hid a word from G1, G3 and G6 completely, mathematical letters hid it from G6, a combining
+accent hid a hedge from G3, and a line break, tab or no-break space inside "as an AI" hid it from G5.
+
+- **Delivered text is normalized.** The text the gates read is the text that is delivered, so it now
+  arrives with compatibility forms folded (fullwidth and mathematical letters become plain ones, ligatures
+  such as "ﬁ" are split, a no-break space becomes a space), invisible format characters removed,
+  lookalike letters folded as above, and accent marks on Latin letters dropped ("café" arrives as
+  "cafe"). Marks in other scripts (Hindi, Arabic, Greek, Cyrillic) are kept, because there they are part
+  of the spelling. Compatibility folding also changes some symbols: "m²" becomes "m2", "™"
+  becomes "TM", "½" becomes "1⁄2". `payload_in` keeps the text as it arrived.
+- **Line breaks and tabs are kept** in the delivered text. Inside a phrase the gates match any run of
+  whitespace as a space. (Not changed by this fix: a blank line between paragraphs is collapsed to a single
+  space by the existing whitespace cleanup, as it was before.)
+- **Still open, on purpose:** the G1 word lists were not widened. An instruction override with a period
+  between the verb and the noun ("Ignore. All previous instructions"), with more than 40 characters between
+  them, or written with other words ("Pay no attention to the earlier guidance") is not found by G1.
+  `tests/test_screen_known_limits.py` records all three.
+
 Treat the gates as a style filter for cooperative output, not as a control against text written to get past
 them.
 

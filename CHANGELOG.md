@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Unicode bypasses in G1 to G6 (P1, 2026-11-25)
+
+Found by audit at `9784786` on the ops profile (EXECUTED): fullwidth letters bypassed G1, G3 and G6 completely
+("Ｉｇｎｏｒｅ all previous instructions" audited `clean`); a line break, tab or no-break space inside "as an AI" bypassed G5;
+mathematical letters bypassed G6; a combining accent bypassed G3.
+
+Changed (owner decision: the delivered text is normalized, consistent with the 2026-11-19 fix):
+- `fold_for_matching` (`src/zts/sieve.py`) now applies compatibility folding (NFKC: fullwidth, mathematical
+  letters, ligatures, no-break space), then drops format characters and folds lookalikes as before, then drops
+  accent marks on Latin letters only (owner choice A, 2026-11-25: marks in Hindi, Arabic, Greek and Cyrillic
+  are part of the spelling and are kept). Line breaks and tabs are kept.
+- Multi-word phrases in SBF, SND and PUFFERY, and the G1 axioms, match any run of whitespace where they have a
+  space. No word was added to any list.
+- README: a limits note that delivered text is normalized, with its side effects ("m²" becomes "m2").
+
+Not changed, on purpose: the G1 word lists. Three cases are recorded as known limits in
+`tests/test_screen_known_limits.py`: a period between "ignore" and "instructions", more than 40 characters
+between them, and synonyms.
+
+Tests: `tests/test_unicode_folding.py` (every bypass now audits exactly like its plain text; line breaks kept;
+marks outside Latin letters kept; folding idempotent) and three known-limit tests.
+
+Existing test edited, because the decided change alters exactly what it asserts:
+`tests/test_sieve.py::TestPublicApi::test_unicode_survives` asserted "café" survives `scrub`. Under the decision it
+arrives as "cafe"; the test now asserts that, and that a non-Latin symbol (an arrow) still survives.
+
 ### Leakage check: missed formats (P0, 2026-11-25)
 
 Found by audit at `9784786` (EXECUTED): each of these audited `clean` on every profile.

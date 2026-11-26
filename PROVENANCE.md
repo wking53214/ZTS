@@ -46,7 +46,8 @@ GSA v13.0 form, which is the fullest version the record contains.
 
 - Gate identities: seven gates, their codes, names, and canonical numbering.
 - The fail-fast principle and its rationale.
-- `REGEX_CACHE` patterns for PPA, SBF, SND.
+- `REGEX_CACHE` patterns for PPA, SBF, SND. Their words are unchanged; since 2026-11-25 the space inside
+  a multi-word phrase is written as "any run of whitespace", so a line break or tab cannot hide the phrase.
 - The `0.815` pacing coefficient, as a default.
 - Profile names and thresholds: `default` 88, `ops` 90, `exec` 85, `legal` 97.
 - Penalty weights: identity 10, hedging 5, causality 10, punctuation 3.

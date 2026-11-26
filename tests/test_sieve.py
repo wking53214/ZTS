@@ -147,5 +147,9 @@ class TestPublicApi:
         assert result.payload_out == ""
 
     def test_unicode_survives(self):
-        text = "Latency rose 40ms → café service degraded."
-        assert "café" in scrub(text)
+        # Edited 2026-11-25 (P1): delivered text drops accent marks on Latin letters, so the
+        # accented word now arrives as "cafe". Other non-ASCII characters still survive.
+        text = "Latency rose 40ms \u2192 caf\u00e9 service degraded."
+        out = scrub(text)
+        assert "\u2192" in out
+        assert "cafe service degraded" in out
