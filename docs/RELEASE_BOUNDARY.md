@@ -300,10 +300,10 @@ What is and is not true about it:
 ## CNS compatibility
 
 The dock accepts CNS releases of an accepted major version (`CNS_ACCEPTED_MAJORS`, now 2, 3 and 4) at or above
-`CNS_CONTRACT_VERSION`, now `2.3.0`, which is the release `pyproject.toml` pins
-(tag `v2.3.0`, commit `41592fb7b6735abe140f745353c09ba3eed8e7a2`). Before this
-change the floor was `1.4.0` and refused major 2, so the dock refused the very
-release ZTS pins: with the real pinned CNS installed, 19 existing tests failed.
+`CNS_CONTRACT_VERSION`, now `2.3.0` (tag `v2.3.0`, commit `41592fb7b6735abe140f745353c09ba3eed8e7a2`):
+the release the seam was first verified against and the oldest the dock accepts. It is not the pin;
+`pyproject.toml` pins CNS `v4.1.0`. When the floor was introduced, the package pinned `2.3.0`; before
+that change the floor was `1.4.0` and refused major 2, so the dock refused the very release ZTS then pinned: with the real pinned CNS installed, 19 existing tests failed.
 1.x releases are now refused because nothing was verified against them. Major 3 was added after
 reading CNS 3.0.0's release note: its only breaking change is that `subject_digest` refuses a
 subclass of `str`, `int`, `float`, `dict`, `list` or `tuple` (a `str` Enum, for one), and plain

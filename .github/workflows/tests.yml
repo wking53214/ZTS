@@ -127,7 +127,8 @@ jobs:
         run: python -m pytest tests/ -q -rs
 
   cns-3:
-    # The same stack with CNS 3.0.0 over the pinned 2.3.0, to hold the dock's acceptance of major 3.
+    # The same stack with CNS 3.0.0 installed over the pinned 4.1.0, to hold the dock's acceptance of major 3.
+    # (2.3.0 is the oldest CNS release the dock accepts, not the pin.)
     # ZTS_REQUIRE_CNS_3=1 turns a CNS that is not 3.x into a failure, so tests/test_cns_three.py cannot skip.
     runs-on: ubuntu-latest
     strategy:

@@ -2,7 +2,8 @@
 
 The dock once demanded exactly CNS 1.4.0 and raised on every later release.
 Its floor then stayed at 1.4.0 after the package pinned CNS 2.3.0, so the dock
-refused the very release ZTS pins. The floor is now the pinned release, 2.3.0.
+refused the very release ZTS then pinned. The floor became that release, 2.3.0, and stays there as the oldest
+release accepted; the pin has since moved to 4.1.0 (pyproject.toml), which the floor does not follow.
 These tests pin the rule so neither can come back. They do not need CNS: the dock is pointed at stand-in ``cns``
 modules declaring whatever version a test asks for, so they never skip.
 """

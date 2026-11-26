@@ -9,10 +9,10 @@ from .errors import CNSContractError, CNSUnavailableError, CNSVerificationError
 from .translation import ADAPTER_VERSION, make_unavailable_artifact, translate_identity
 
 
-# The CNS release this seam was frozen against and verified against: the
-# release ZTS pins in pyproject.toml (tag v2.3.0, commit
-# 41592fb7b6735abe140f745353c09ba3eed8e7a2). It is the oldest release the dock
-# accepts, not the only one. CNS adds a field only with a default in a minor
+# CNS_CONTRACT_VERSION is the CNS release this seam was first frozen and
+# verified against (tag v2.3.0, commit 41592fb7b6735abe140f745353c09ba3eed8e7a2),
+# and the oldest release the dock accepts. It is not the pin: pyproject.toml
+# pins CNS v4.1.0 (see the major 4 note below). CNS adds a field only with a default in a minor
 # release and removes or renames one only in a new major release (the
 # VERSIONING note in cns/__init__.py), and validate_contract checks the
 # IdentityContext fields themselves. So any release of an accepted major version
