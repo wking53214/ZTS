@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
 
@@ -19,6 +20,13 @@ from zts import ReleaseState
 from zts.ledger_store import LedgerCorruptionError
 from zts.ledger import ValLedger
 from zts.ledger_store import FileLedgerAnchor, FileLedgerStore
+
+# A file this module opens and leaves for the garbage collector fails the test that opened it (P9). CPython closes
+# such a file the moment the last reference goes, inside the test, so the failure names the right test.
+pytestmark = [
+    pytest.mark.filterwarnings("error:unclosed file:ResourceWarning"),
+    pytest.mark.filterwarnings("error:Exception ignored in. <_io\\.:pytest.PytestUnraisableExceptionWarning"),
+]
 
 
 @pytest.fixture(params=["sync", "async"])
@@ -135,8 +143,8 @@ def test_truncating_the_durable_ledger_after_a_release_is_detected(tmp_path, mod
     ledger = ValLedger(key=b"l" * 32, store=FileLedgerStore(ledger_path), anchor=FileLedgerAnchor(anchor_path))
     s = build(tmp_path, ledger=ledger)
     run(s, mode, request(s))
-    rows = open(ledger_path, "rb").read().splitlines(keepends=True)
-    open(ledger_path, "wb").write(b"".join(rows[:-1]))  # remove the RELEASED record
+    rows = Path(ledger_path).read_bytes().splitlines(keepends=True)
+    Path(ledger_path).write_bytes(b"".join(rows[:-1]))  # remove the RELEASED record
     victim = ValLedger(key=b"l" * 32, store=FileLedgerStore(ledger_path), anchor=FileLedgerAnchor(anchor_path))
     assert victim.verify()[0] is True
     ok, reason = victim.verify_anchored()
@@ -184,8 +192,8 @@ def test_a_release_is_not_attempted_once_the_ledger_file_has_been_truncated(tmp_
     s = build(tmp_path)
     s.tower.enforce(TEXT, release=request(s, "rel-1"))
     path = tmp_path / "ledger.jsonl"
-    rows = open(path, "rb").read().splitlines(keepends=True)
-    open(path, "wb").write(b"".join(rows[:3]))
+    rows = Path(path).read_bytes().splitlines(keepends=True)
+    Path(path).write_bytes(b"".join(rows[:3]))
     with pytest.raises(LedgerCorruptionError):
         s.tower.enforce(TEXT, release=request(s, "rel-2"))
     assert len(s.sink.calls) == 1, "no second delivery after the audit trail was cut"

@@ -103,7 +103,7 @@ def test_the_status_client_is_only_called_verified_when_it_demands_a_certificate
 @pytest.mark.parametrize("mode,expected", [("verify-full", "PASS"), ("verify-ca", "UNKNOWN"),
                                            ("require", "FAIL"), ("prefer", "FAIL")])
 def test_only_verify_full_counts_as_a_verified_database_connection(mode, expected, monkeypatch):
-    store = PostgresReplayStore(f"host=db.example port=5432 user=x dbname=y sslmode={mode}", create=False)
+    store = closed_after_test(PostgresReplayStore(f"host=db.example port=5432 user=x dbname=y sslmode={mode}", create=False))
     monkeypatch.setattr(store, "health", lambda: True)
     tls = [c for c in _probe_replay_store(store) if c.name == "replay_store_tls"][0]
     assert tls.status == expected
@@ -162,7 +162,7 @@ def test_health_notices_when_the_replay_table_loses_a_constraint_after_startup(c
     key = IssuerKey("issuer-a", "grant")
     root = TrustRoot.from_dict(trust_doc(key.entry(real_now)))
     table = "t_" + uuid.uuid4().hex[:12]
-    store = PostgresReplayStore(cluster.dsn, table=table)
+    store = closed_after_test(PostgresReplayStore(cluster.dsn, table=table))
     tower = _tower(tmp_path, root, store)
     assert tower.health()["status"] == "ok"
     with psycopg.connect(cluster.dsn, autocommit=True) as c:

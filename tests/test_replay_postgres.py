@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from cleanup_kit import closed_after_test
 from pg_kit import cluster  # noqa: F401  (session fixture)
 from release_kit import TEXT, assert_not_released, build, request, run, static_grant
 from zts.replay_postgres import PostgresReplayStore, ReplayStoreError
@@ -27,7 +28,7 @@ def table():
 
 @pytest.fixture
 def store(cluster, table):
-    s = PostgresReplayStore(cluster.dsn, table=table)
+    s = closed_after_test(PostgresReplayStore(cluster.dsn, table=table))
     yield s
     s.close()
 
@@ -53,10 +54,10 @@ def test_either_uniqueness_constraint_blocks_a_second_use(store):
 
 
 def test_the_state_survives_a_restart_of_the_client(cluster, table):
-    first = PostgresReplayStore(cluster.dsn, table=table)
+    first = closed_after_test(PostgresReplayStore(cluster.dsn, table=table))
     assert first.consume("iss", "n1", "r1") is True
     first.close()
-    second = PostgresReplayStore(cluster.dsn, table=table)
+    second = closed_after_test(PostgresReplayStore(cluster.dsn, table=table))
     assert second.consume("iss", "n1", "r1") is False
     second.close()
 
@@ -74,7 +75,7 @@ def test_threads_racing_for_one_grant_produce_exactly_one_winner(store):
 
 
 def _race(dsn, table, keys, out):
-    s = PostgresReplayStore(dsn, table=table, create=False)
+    s = closed_after_test(PostgresReplayStore(dsn, table=table, create=False))
     out.put(sum(1 for k in keys if s.consume("iss", k, "req-" + k)))
     s.close()
 
@@ -166,7 +167,7 @@ def test_two_hosts_racing_to_release_one_grant_release_it_once(cluster, table, t
     hosts = []
     for n in range(2):
         (tmp_path / f"h{n}").mkdir()
-        st = PostgresReplayStore(cluster.dsn, table=table)
+        st = closed_after_test(PostgresReplayStore(cluster.dsn, table=table))
         hosts.append(build(tmp_path / f"h{n}", store=st, clock=clock))
     grant = static_grant(hosts[0])
     barrier = threading.Barrier(8)
@@ -196,7 +197,7 @@ def test_a_replay_on_a_different_host_after_the_first_released_is_denied(cluster
 
 
 def test_a_database_outage_during_release_is_a_denial_with_nothing_delivered(cluster, table, tmp_path, mode):
-    dead = PostgresReplayStore(cluster.dsn, table=table)
+    dead = closed_after_test(PostgresReplayStore(cluster.dsn, table=table))
     s = build(tmp_path, store=dead)
     dead.close()
     dead._dsn = "host=127.0.0.1 port=1 user=zts dbname=postgres connect_timeout=1"  # now unreachable
