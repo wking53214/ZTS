@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Housekeeping: the CNS pin and the identity statement (P3, 2026-11-26)
+
+- Stale notes called CNS 2.3.0 "the pin" (INSPECTED at `9784786`): the comment in `src/zts/cns/adapter.py`, the
+  `cns-3` job in `.github/workflows/tests.yml`, and (found in the same pass, not on the original list)
+  `docs/RELEASE_BOUNDARY.md` and the docstring of `tests/test_cns_version_rule.py`. The pin is 4.1.0; 2.3.0 is the
+  oldest release the dock accepts. Wording only; no version rule changed.
+- README (owner decision): unless an identity verifier is configured, Enforcer's grant is the only check on who
+  the subject is, and ZTS does not authenticate people by itself. Enforcer stays the only identity authority in
+  production.
+
+Tests: `tests/test_cns_pin_notes.py` reads the real pin from `pyproject.toml`, so a note fails the suite if it
+calls the floor the pin or stops naming the pin when the pin moves again.
+
 ### Fail-closed consistency (P2, 2026-11-25)
 
 Found at `9784786` (EXECUTED):

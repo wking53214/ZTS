@@ -253,6 +253,11 @@ chosen explicitly, performs no authorization, and is refused by `require_enforce
   just before delivery, failing closed. `zts.identity.Ed25519IdentityVerifier` is a ready hook that checks your identity
   provider's signature (see `examples/identity_provider/`). With no hook, the issuer is the only authentication.
 
+  **Who the subject is.** Unless an identity verifier is configured, Enforcer's grant is the only check on
+  who the subject is: the issuer vouched for the subject when it signed the grant, and Enforcer checks that
+  grant. ZTS does not authenticate people by itself. Enforcer stays the only identity authority in
+  production; the identity hook is an extra check you can add, not a replacement for it.
+
 ## The audit ledger
 
 Every decision appends a hash-chained entry. With a `FileLedgerStore` each entry is written and
