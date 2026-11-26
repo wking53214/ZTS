@@ -37,6 +37,13 @@ BEDROCK_AXIOMS: tuple[str, ...] = (
     "the stack does not author its own axioms",
 )
 
+#: Each axiom as a pattern in which any run of whitespace stands for a space, so a line
+#: break or tab inside an axiom does not hide it.
+_AXIOM_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
+    (axiom, re.compile(r"\s+".join(re.escape(word) for word in axiom.split())))
+    for axiom in BEDROCK_AXIOMS
+)
+
 #: Phrasings that indicate a payload is trying to rewrite the axiom set rather
 #: than merely discuss it.
 _AXIOM_OVERRIDE = re.compile(
@@ -133,14 +140,15 @@ def gate_ab(payload: str, ctx: GateContext) -> tuple[str, list[Finding]]:
     findings: list[Finding] = []
     lowered = payload.lower()
 
-    for axiom in BEDROCK_AXIOMS:
-        if axiom in lowered:
+    for axiom, pattern in _AXIOM_PATTERNS:
+        hit = pattern.search(lowered)
+        if hit:
             findings.append(
                 Finding(
                     gate=Gate.G1,
                     verdict=Verdict.BREACH,
                     evidence=axiom,
-                    offset=lowered.find(axiom),
+                    offset=hit.start(),
                     detail="payload restates a bedrock axiom",
                 )
             )
@@ -267,20 +275,51 @@ _LOOKALIKES = {
     "\u039c": "M", "\u039d": "N", "\u039f": "O", "\u03a1": "P", "\u03a4": "T", "\u03a7": "X",
     "\u03a5": "Y", "\u0396": "Z",
 }
-_WORD = re.compile(r"\w+", re.UNICODE)
+#: A word for lookalike folding: letters, digits and underscore, plus any combining marks
+#: inside it, so an accent written as a separate mark does not split the word in two.
+_WORD = re.compile(r"(?:\w|[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f])+", re.UNICODE)
+
+
+def _drop_latin_accents(text: str) -> str:
+    """Remove combining accent marks that sit on a Latin letter. Text must be decomposed (NFD).
+
+    Only marks on Latin letters go, so "cafe\u0301" becomes "cafe" while Hindi vowel signs,
+    Arabic vowel marks and accents on Greek or Cyrillic letters are kept: in those scripts the
+    marks are part of how a word is spelled.
+    """
+    out: list[str] = []
+    base_is_latin = False
+    for ch in text:
+        if unicodedata.category(ch) in ("Mn", "Me"):
+            if base_is_latin:
+                continue
+        else:
+            base_is_latin = unicodedata.name(ch, "").startswith("LATIN ")
+        out.append(ch)
+    return "".join(out)
 
 
 def fold_for_matching(text: str) -> str:
-    """Drop invisible format characters and fold lookalike letters inside mixed-script words.
+    """Normalize the text the gates read, which is also the text that is delivered.
 
-    The gates match fixed English words letter for letter, so a zero-width character
-    or one Cyrillic lookalike inside a word hid it from them. Format characters
-    (zero-width space and joiners, bidi marks, soft hyphen) carry no meaning in
-    running text and are removed. A lookalike is replaced only when its word also
-    holds a Latin letter, so ordinary Cyrillic or Greek words are untouched. A word
-    made only of lookalikes (a lone Greek capital iota, say) is not folded.
+    The gates match fixed English words letter for letter, so any other way of writing
+    the same letters hid a word from them. In order:
+
+      1. Compatibility folding (NFKC): fullwidth and mathematical letters become plain
+         ones, ligatures such as "\ufb01" are split, a no-break space becomes a space.
+      2. Invisible format characters (zero-width space and joiners, bidi marks, soft
+         hyphen) are removed.
+      3. Cyrillic or Greek lookalike letters are folded to Latin inside a word that also
+         holds a Latin letter. Ordinary Cyrillic or Greek words are untouched, and a word
+         made only of lookalikes (a lone Greek capital iota, say) is not folded.
+      4. Accent marks on Latin letters are dropped ("mi\u0301ght" becomes "might").
+
+    Line breaks and tabs are kept. The gate patterns match any run of whitespace where a
+    phrase has a space, so a line break inside "as an AI" no longer hides it.
     """
+    text = unicodedata.normalize("NFKC", text)
     text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+    text = unicodedata.normalize("NFD", text)
 
     def fix(match: "re.Match[str]") -> str:
         word = match.group(0)
@@ -288,7 +327,8 @@ def fold_for_matching(text: str) -> str:
             return word
         return "".join(_LOOKALIKES.get(ch, ch) for ch in word)
 
-    return _WORD.sub(fix, text)
+    text = _WORD.sub(fix, text)
+    return unicodedata.normalize("NFC", _drop_latin_accents(text))
 
 
 class ZeroTrustSieve:
