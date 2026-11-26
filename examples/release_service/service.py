@@ -249,17 +249,21 @@ class ReleaseService:
             finally:
                 probe.close()
         server = socket.socket(socket.AF_UNIX)
-        old = os.umask(0o177)
         try:
-            server.bind(str(target))
-        finally:
-            os.umask(old)
-        if group is not None:
-            import shutil
-            shutil.chown(target, group=group)
-        os.chmod(target, mode)
-        server.listen(32)
-        server.settimeout(0.5)
+            old = os.umask(0o177)
+            try:
+                server.bind(str(target))
+            finally:
+                os.umask(old)
+            if group is not None:
+                import shutil
+                shutil.chown(target, group=group)
+            os.chmod(target, mode)
+            server.listen(32)
+            server.settimeout(0.5)
+        except BaseException:
+            server.close()  # a bind that fails part way must not leave its socket open
+            raise
         self._server = server
 
     def serve_forever(self) -> None:

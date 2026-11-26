@@ -6,6 +6,8 @@ locations of ../isolation/ filled in. Copy it, change the addresses and names at
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import enforcer
 from delivery import HttpsReceiver
 
@@ -30,10 +32,10 @@ AUDIENCE = "zts-release/prod"
 
 
 def build_tower(config: dict) -> DeterministicIntegrityTower:
-    dsn = open(REPLAY_DSN_FILE, encoding="utf-8").read().strip()
+    dsn = Path(REPLAY_DSN_FILE).read_text(encoding="utf-8").strip()
     trust = FileTrustRoot("/etc/zts/trust-root.json", serial_store=PostgresSerialStore(dsn, create=False))
     replay = PostgresReplayStore(dsn, create=False)
-    anchor = Rfc3161Anchor(TSA_URL, [open("/etc/zts/tsa-signing.pem", "rb").read()], "/var/lib/zts/receipts.jsonl",
+    anchor = Rfc3161Anchor(TSA_URL, [Path("/etc/zts/tsa-signing.pem").read_bytes()], "/var/lib/zts/receipts.jsonl",
                            timeout=10.0, on_receipt=RECEIPT_EXPORT)
     ledger = ValLedger(key=load_or_create_ledger_key("/var/lib/zts/ledger.key"),
                        store=FileLedgerStore("/var/lib/zts/ledger.jsonl"), anchor=anchor)
@@ -50,5 +52,5 @@ def build_tower(config: dict) -> DeterministicIntegrityTower:
             identity_verifier=Ed25519IdentityVerifier(trust, audience=AUDIENCE)),
         release_sink=receiver.deliver,
         delivery_confirmer=receiver.confirm,
-        hmac_key=open("/etc/zts/secrets/release-signing.key", "rb").read(),
+        hmac_key=Path("/etc/zts/secrets/release-signing.key").read_bytes(),
         ledger=ledger)

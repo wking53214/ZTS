@@ -35,7 +35,8 @@ def read_credential(path: str) -> str:
     info = os.stat(path)
     if info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise DeliveryError("the credential file must be owned by this account and mode 600")
-    token = open(path, encoding="utf-8").read().strip()
+    with open(path, encoding="utf-8") as f:
+        token = f.read().strip()
     if len(token) < 16 or not token.isprintable() or " " in token:
         raise DeliveryError("the credential file does not hold a usable token")
     return token

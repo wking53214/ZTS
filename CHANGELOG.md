@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### The example release service closes what it opens (P10, 2026-11-26)
+
+- `examples/release_service/delivery.py`: `read_credential` read the bearer credential with a bare `open().read()`,
+  which leaves the file to the garbage collector; it now closes the file at once. It runs on every delivery.
+- `examples/release_service/service.py`: a `bind()` that failed after creating its socket (for example an unknown
+  group, a chmod or a listen error) left that socket open. It now closes it and re-raises; a successful bind is
+  unchanged.
+- `examples/release_service/assemble_example.py` and the matching snippet in `docs/DEPLOYMENT.md` section 6: the
+  replay DSN, the TSA certificate and the release signing key were read the same way; they now use
+  `Path.read_text`/`read_bytes`. The snippet is still checked by `tests/test_deployment_guide.py`.
+- Tests (`tests/test_release_service.py`): `test_reading_the_credential_closes_the_file` and
+  `test_a_bind_that_fails_part_way_closes_its_socket` both fail on the old example code. The unsafe-place test
+  now stops the service it bound; that socket was the test's leak, not the example's (P9 listed it under examples).
+- Full run with every ResourceWarning shown: 81 reports down to 64, and none of the remaining ones comes from
+  `tests/` or `examples/`. All of them come from `src/zts` (`replay_postgres.py`, `_http.py`), as listed under P9.
+  The PostgreSQL count moves a little between runs, because it depends on when worker threads end.
+
 ### Close the files, sockets and database connections the tests open (P9, 2026-11-26)
 
 - Test-only change; no product or example code changed. With every ResourceWarning shown, a full run reported 153
