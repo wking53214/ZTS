@@ -216,16 +216,55 @@ def test_a_host_whose_file_fell_behind_is_refused_instead_of_using_stale_keys(tm
         root.current()  # same serial, different content than the one recorded: also refused
 
 
-def test_the_recheck_interval_bounds_how_long_a_stale_host_keeps_going(tmp_path, key):
+class TrustClock:
+    """Stands in for the time module inside zts.trust only: monotonic() is moved by the test, the rest is real.
+
+    The recheck interval is measured with time.monotonic(). With the real clock a slow CI machine took
+    more than the 0.3 s interval between two releases and failed the "inside the interval" step.
+    """
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def monotonic(self):
+        return self.now
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
+@pytest.fixture
+def trust_clock(monkeypatch):
+    import zts.trust
+
+    clock = TrustClock()
+    monkeypatch.setattr(zts.trust, "time", clock)
+    return clock
+
+
+def test_the_recheck_interval_bounds_how_long_a_stale_host_keeps_going(tmp_path, key, trust_clock):
     path = tmp_path / "trust.json"
     put(path, doc(key, 1))
     shared = FileSerialStore(tmp_path / "hw.json")
     s, root = stack(tmp_path, key, path, serial_store=shared, recheck_interval=0.3)
     assert release(s, key, 1).release_outcome == "delivered"
     shared.record(2, "newer")
+    trust_clock.now += 0.29
     assert release(s, key, 2).release_outcome == "delivered", "inside the interval: not rechecked yet (documented)"
-    time.sleep(0.4)
+    trust_clock.now += 0.02
     assert release(s, key, 3).release_outcome == "denied"
+
+
+def test_real_time_spent_between_releases_does_not_count_against_the_interval(tmp_path, key, trust_clock):
+    # Regression for the CI flake: more real time than the interval passes, the interval's clock does not.
+    path = tmp_path / "trust.json"
+    put(path, doc(key, 1))
+    shared = FileSerialStore(tmp_path / "hw.json")
+    s, _ = stack(tmp_path, key, path, serial_store=shared, recheck_interval=0.3)
+    assert release(s, key, 1).release_outcome == "delivered"
+    shared.record(2, "newer")
+    time.sleep(0.35)  # a slow machine, standing still on the trust clock
+    assert release(s, key, 2).release_outcome == "delivered"
 
 
 @pytest.mark.parametrize("bad", [-1, True, "30"])

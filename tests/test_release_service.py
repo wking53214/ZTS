@@ -10,6 +10,7 @@ import base64
 import json
 import os
 import pwd
+import select
 import shutil
 import socket
 import ssl
@@ -238,18 +239,44 @@ def running(tmp_path):
     shutil.rmtree(run_dir, ignore_errors=True)
 
 
-def call(path, raw, *, newline=True, timeout=5):
+def call(path, raw, *, newline=True, timeout=5, peer_may_hang_up=False):
     with socket.socket(socket.AF_UNIX) as c:
         c.settimeout(timeout)
         c.connect(path)
+        return exchange(c, raw, newline=newline, peer_may_hang_up=peer_may_hang_up)
+
+
+def exchange(c, raw, *, newline=True, peer_may_hang_up=False):
+    """Send one request on a connected socket and read the one-line answer.
+
+    peer_may_hang_up: the service answers BUSY and closes without reading, so a send that lands after
+    that close fails with a broken pipe while the answer is still there to read. Only a caller that
+    expects that answer (the BUSY probe) sets it; every other call still fails loudly on a broken pipe.
+    """
+    try:
         c.sendall(raw + (b"\n" if newline else b""))
-        data = b""
-        while not data.endswith(b"\n"):
-            chunk = c.recv(65536)
-            if not chunk:
-                break
-            data += chunk
+    except BrokenPipeError:
+        if not peer_may_hang_up:
+            raise
+    data = b""
+    while not data.endswith(b"\n"):
+        chunk = c.recv(65536)
+        if not chunk:
+            break
+        data += chunk
     return json.loads(data) if data else None
+
+
+def wait_for_hang_up(c, timeout=5):
+    """Block until the far end of a Unix socket has closed (Linux POLLRDHUP), however slow the machine."""
+    poller = select.poll()
+    poller.register(c, select.POLLRDHUP | select.POLLHUP)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for _, events in poller.poll(50):
+            if events & (select.POLLRDHUP | select.POLLHUP):
+                return
+    raise AssertionError("the service did not hang up")
 
 
 def test_a_request_over_the_real_socket_is_released_and_the_caller_is_read_from_the_kernel(running):
@@ -300,7 +327,7 @@ def test_when_every_slot_is_busy_a_new_caller_is_told_so_immediately(running):
         # release anything: it is answered BAD_REQUEST while a slot is free and BUSY once none is.
         deadline, answer = time.monotonic() + 5, None
         while time.monotonic() < deadline:
-            answer = call(path, b"{}", timeout=2)
+            answer = call(path, b"{}", timeout=2, peer_may_hang_up=True)
             if answer["reason_code"] == "BUSY":
                 break
             time.sleep(0.05)
@@ -308,6 +335,49 @@ def test_when_every_slot_is_busy_a_new_caller_is_told_so_immediately(running):
     finally:
         for c in holders:
             c.close()
+
+
+def test_a_busy_answer_is_read_even_when_the_service_hangs_up_before_the_probe_sends(running):
+    # Regression: CI failed with BrokenPipeError in the BUSY probe. Here that order is forced, not hoped for:
+    # each probe connection sends only after the service has answered BUSY and closed it.
+    _, _, path, _ = running
+
+    def hung_up_busy_connection():
+        c = socket.socket(socket.AF_UNIX)
+        c.settimeout(2)
+        c.connect(path)
+        wait_for_hang_up(c)
+        if b'"BUSY"' in c.recv(65536, socket.MSG_PEEK):
+            return c
+        c.close()  # a slot had come free, so this connection was served instead
+        return None
+
+    for _attempt in range(5):  # a fresh pair of slot holders each time, in case a slow machine let them time out
+        holders = []
+        try:
+            for _ in range(2):  # max_concurrent is 2
+                c = socket.socket(socket.AF_UNIX)
+                c.connect(path)
+                holders.append(c)
+            deadline = time.monotonic() + 5
+            while call(path, b"{}", timeout=2, peer_may_hang_up=True)["reason_code"] != "BUSY":
+                assert time.monotonic() < deadline, "the service never filled both slots"
+                time.sleep(0.05)
+            old, new = hung_up_busy_connection(), hung_up_busy_connection()
+            if old is None or new is None:
+                for c in (old, new):
+                    if c is not None:
+                        c.close()
+                continue
+            with old, new:
+                with pytest.raises(BrokenPipeError):
+                    exchange(old, b"{}")  # the probe as it was: crashes although the answer is waiting
+                assert exchange(new, b"{}", peer_may_hang_up=True)["reason_code"] == "BUSY"
+            return
+        finally:
+            for c in holders:
+                c.close()
+    pytest.fail("could not hold both slots long enough to probe them")
 
 
 @pytest.mark.skipif(os.getuid() != 0 or not pwd.getpwnam("nobody"), reason="needs root and the nobody account")
