@@ -174,6 +174,13 @@ class DeterministicIntegrityTower:
         if require_enforcer and release_gate is None:
             raise ValueError("require_enforcer needs a release_gate")
         self.profile = get_profile(profile) if isinstance(profile, str) else profile
+        # run() makes max_retries attempts and needs at least one result to decide on.
+        # Refused here, at build time, instead of failing on the first call.
+        retries = self.profile.max_retries
+        if isinstance(retries, bool) or not isinstance(retries, int) or retries < 1:
+            raise ValueError(
+                f"profile {self.profile.name!r} has max_retries={retries!r}; it must be an integer of at least 1"
+            )
         self.lc = LogicCornerstone(self.profile.name)
         self.zts = ZeroTrustSieve(self.profile)
         self.kg = governor or KineticGovernor()

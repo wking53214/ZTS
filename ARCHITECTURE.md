@@ -82,8 +82,8 @@ checked and when, and the unresolved risks.
 
 The legacy capstone has four modes, each an explicit opt-in: `AUTO` (release
 anything clean, no authorization performed), `HANDSHAKE` (require a matching
-authority token, compared in constant time), `CALLBACK` (defer to a supplied
-approver), and `SEALED` (never release). With no authority configured at all the
+authority token, compared in constant time), `CALLBACK` (release only when a supplied
+approver returns exactly `True`; "no", a list or 1 holds), and `SEALED` (never release). With no authority configured at all the
 tower holds everything, and `ArchitectsProtocol()` with no argument is `SEALED`.
 
 G7 is the one gate whose value is architectural rather than mechanical. It is
