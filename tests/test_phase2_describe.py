@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from cleanup_kit import closed_after_test
 from release_kit import enforcer
 from zts import EnforcerReleaseGate
 from zts.ops import (
@@ -41,7 +42,7 @@ class Status:
 
 def gate_for(*, policy=None, store=None, verifier=None):
     enf = enforcer.Enforcer(verifier=verifier or Verifier(), revalidator=Status(),
-                            replay_store=store or enforcer.SQLiteReplayStore(), policy=policy)
+                            replay_store=store or closed_after_test(enforcer.SQLiteReplayStore()), policy=policy)
     return EnforcerReleaseGate(enf, policy_version="p1", timeout=2.0)
 
 
@@ -139,7 +140,7 @@ def test_a_store_describing_itself_as_in_memory_fails():
 
 @pytest.mark.parametrize("backed,expected", [(False, "FAIL"), (True, "UNKNOWN")])
 def test_enforcers_own_sqlite_store_is_judged_on_every_supported_release(tmp_path, backed, expected):
-    store = enforcer.SQLiteReplayStore(tmp_path / "r.db") if backed else enforcer.SQLiteReplayStore()
+    store = closed_after_test(enforcer.SQLiteReplayStore(tmp_path / "r.db") if backed else enforcer.SQLiteReplayStore())
     assert states(_probe_enforcer(gate_for(store=store)))["replay_store"] == expected
 
 
@@ -262,7 +263,7 @@ def test_the_public_adapters_are_preferred_and_the_private_ones_are_the_fallback
 def test_a_real_enforcer_gives_the_same_objects_either_way():
     from zts.ops import _adapters
 
-    store = enforcer.SQLiteReplayStore()
+    store = closed_after_test(enforcer.SQLiteReplayStore())
     gate = gate_for(store=store)
     verifier, revalidator, found_store = _adapters(gate)
     assert found_store is store and verifier is gate.enforcer._verifier and revalidator is gate.enforcer._revalidator

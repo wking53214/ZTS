@@ -20,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from cleanup_kit import closed_after_test
 from release_kit import (
     OTHER_TEXT,
     POLICY,
@@ -368,7 +369,9 @@ def test_attack_13_enforcer_components_failing_deny(tmp_path, mode, failure):
 
 def test_an_unconfigured_enforcer_denies_every_release(tmp_path, mode):
     s = build(tmp_path)
-    s.tower.release_gate._enforcer = enforcer.Enforcer()  # Enforcer's own defaults
+    defaults = enforcer.Enforcer()  # Enforcer's own defaults
+    closed_after_test(defaults._replay_store)  # the in-memory store it opened for itself
+    s.tower.release_gate._enforcer = defaults
     result = run(s, mode, request(s))
     assert_not_released(s, result, "PROOF_INVALID", outcome="denied")
 

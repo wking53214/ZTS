@@ -31,6 +31,8 @@ from typing import Any, Callable
 
 import pytest
 
+from cleanup_kit import closed_after_test
+
 if os.environ.get("ZTS_REQUIRE_ENFORCER") == "1":
     import enforcer
 else:
@@ -285,6 +287,8 @@ def build(
     status = StatusSource(clock)
     verifier = verifier or HmacVerifier()
     store = store if store is not None else SQLiteReplayStore(tmp_path / "replay.db")
+    if hasattr(store, "close"):
+        closed_after_test(store)  # a store passed in is closed too: no test shares one with the next
     gate_enforcer = Enforcer(verifier=verifier, revalidator=status, replay_store=store, clock=clock)
     recorder = Sink()
     receiving = sink if hasattr(sink, "calls") else recorder

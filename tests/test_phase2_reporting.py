@@ -17,6 +17,7 @@ import uuid
 
 import pytest
 
+from cleanup_kit import closed_after_test
 from issuer_kit import IssuerKey, trust_doc
 from pg_kit import cluster  # noqa: F401  (session fixture)
 from release_kit import enforcer, request, run, build
@@ -140,7 +141,7 @@ def test_health_notices_when_the_trust_root_stops_having_a_usable_key(tmp_path):
     key = IssuerKey("issuer-a", "grant")
     path = tmp_path / "trust.json"
     _write(path, trust_doc(key.entry(real_now)))
-    tower = _tower(tmp_path, FileTrustRoot(path), enforcer.SQLiteReplayStore(tmp_path / "r.db"))
+    tower = _tower(tmp_path, FileTrustRoot(path), closed_after_test(enforcer.SQLiteReplayStore(tmp_path / "r.db")))
     assert tower.health()["status"] == "ok"
 
     _write(path, trust_doc(key.entry(real_now, status="revoked")))  # a revocation, or a bad edit
