@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### G6 stops changing meaning (P13, 2026-11-27)
+
+- Critical fix. G6 deleted every match of its pronoun pattern, including words that are not pronouns and
+  pronouns that cannot be cut out cleanly: "Sales in the US market" became "Sales in the market",
+  `me@example.com` became `@example.com`, "I'm unable to confirm" became "'m unable to confirm", "I/O"
+  became "/O", "US-East-1" became "-East-1", and a link lost a "/my/" path segment. One such finding scores 90,
+  above every profile's threshold, so the changed text was delivered as ADVISORY.
+- G6 now removes a pronoun only when it stands alone. A pronoun-shaped piece of an address, link, path, code or
+  number is not a finding, and neither is "US" the country (including "the US's"). A real pronoun it cannot
+  remove cleanly (a contraction, a pronoun-only pair such as "I/we", a pronoun joined to prose by a hyphen or
+  dash) or one that may be something else ("Phase I", "a type I error", "On Monday I", an all-caps "US" in a
+  sentence with no lowercase letters) is reported and left in place. When any finding must stay, G6 changes
+  nothing, so the payload is held whole on every profile instead of half-edited.
+- Unchanged: the pattern's words, standalone pronouns are still removed ("I built my own system myself"
+  becomes "built own system"), the finding cap of 12, scoring and gate order.
+- Tests (`tests/test_g6_meaning.py`): 148 cases; 138 fail on the old code, and the other 10 pin behavior that
+  must not change. Docs: ARCHITECTURE.md (G6), README gate table, PROVENANCE.md.
+
 ### A single line break is kept in delivered text (P12, 2026-11-26)
 
 - Owner decision. `tidy` in `src/zts/normalizer.py` kept a bare single line break, but turned the same break

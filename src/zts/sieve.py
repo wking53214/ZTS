@@ -103,15 +103,133 @@ class GateContext:
         self.normalizer = normalizer or StructureNormalizer(profile.name)
 
 
+#: Leading and trailing characters that frame a word without being part of it.
+_FRAME_OPEN = "\"'([{<“‘"
+_FRAME_CLOSE = ".,;:!?)]}>\"'”’—…"
+#: A pronoun with a contraction tail: I'm, we've, I'll, we'd ...
+_CONTRACTION = re.compile(r"^[a-z]+['’][a-z]{1,2}$", re.IGNORECASE)
+#: Signs that a joined token is an identifier (address, link, code, number), not prose.
+_IDENTIFIER = re.compile(r"@|://|\d|\w\.\w")
+#: Words that are often followed by a Roman numeral ("Phase I", "a type I error"), in any
+#: case and even at the start of a sentence, where capitalization cannot tell them from "Then I".
+_NUMBERED_SERIES = frozenset(
+    "act appendix article book category chapter class division episode generation grade "
+    "group level part phase round schedule season section stage step tier title type "
+    "volume war".split()
+)
+#: G6 outcomes for one pattern match.
+_SKIP, _REMOVE, _KEEP = "skip", "remove", "keep"
+
+
+def _chunk(text: str, start: int, end: int) -> tuple[int, int]:
+    """The whitespace-delimited run around text[start:end], with framing punctuation trimmed."""
+    lo, hi = start, end
+    while lo > 0 and not text[lo - 1].isspace():
+        lo -= 1
+    while hi < len(text) and not text[hi].isspace():
+        hi += 1
+    while lo < start and text[lo] in _FRAME_OPEN:
+        lo += 1
+    while hi > end and text[hi - 1] in _FRAME_CLOSE:
+        hi -= 1
+    return lo, hi
+
+
+def _sentence(text: str, lo: int, hi: int) -> str:
+    """The sentence (or line) holding text[lo:hi]."""
+    start = max(text.rfind(c, 0, lo) for c in ".!?\n") + 1
+    ends = [i for i in (text.find(c, hi) for c in ".!?\n") if i != -1]
+    return text[start:min(ends) if ends else len(text)]
+
+
+def _previous_word(text: str, lo: int) -> tuple[str, int, int] | None:
+    """The trimmed word before the chunk starting at `lo`, with its bounds."""
+    i = lo - 1
+    while i >= 0 and not text[i].isspace():  # opening quotes or brackets of this chunk
+        i -= 1
+    while i >= 0 and text[i].isspace():
+        i -= 1
+    if i < 0:
+        return None
+    plo, phi = _chunk(text, i, i + 1)
+    return text[plo:phi], plo, phi
+
+
+def _classify_pronoun(text: str, match: re.Match[str]) -> str:
+    """Decide what G6 does with one match: skip it, remove it, or report it and keep it.
+
+    Deleting a word is only safe when the word stands alone and is certainly a pronoun.
+    A match inside an address, link, code or number is not a pronoun at all. A real
+    pronoun that cannot be cut out cleanly (a contraction, an "I/we" pair) or that might
+    be something else ("Phase I", "US" in shouted text) is reported and left in place,
+    which holds the payload instead of changing what it says.
+    """
+    word = match.group(0)
+    lo, hi = _chunk(text, match.start(), match.end())
+    core = text[lo:hi]
+    if core != word:
+        if match.start() == lo and _CONTRACTION.match(core):
+            return _SKIP if word == "US" else _KEEP  # "the US's economy" is the country
+        parts = [p for p in re.split(r"[/\-–—]", core) if p]
+        if parts and all(patterns.PPA.fullmatch(p) for p in parts):
+            return _KEEP
+        if _IDENTIFIER.search(core) or all(p.isalpha() and p.isupper() for p in parts):
+            return _SKIP
+        return _KEEP
+    if word == "US":
+        if not any(c.islower() for c in _sentence(text, lo, hi)):
+            return _KEEP  # shouted text, "PLEASE TELL US": "US" may be the pronoun
+        return _SKIP  # the country
+    if word == "I":
+        before = _previous_word(text, lo)
+        if before is not None:
+            prev, plo, phi = before
+            joined = text[phi:lo].isspace()  # nothing but space between the two words
+            earlier = text[:plo].rstrip().rstrip(_FRAME_OPEN).rstrip()
+            sentence_start = not earlier or earlier[-1] in ".!?" or "\n" in text[len(earlier):plo]
+            series = prev.lower() in _NUMBERED_SERIES
+            capitalized_mid_sentence = prev[:1].isupper() and not sentence_start
+            if joined and prev.isalpha() and (series or capitalized_mid_sentence):
+                return _KEEP  # "Phase I", "World War I": maybe a Roman numeral
+    return _REMOVE
+
+
 def gate_ppa(payload: str, ctx: GateContext) -> tuple[str, list[Finding]]:
     """G6 - Pronominal Purge Array.
 
-    Cheapest gate, highest hit rate. One regex pass, substitution in place.
+    Cheapest gate, highest hit rate. Removes a standalone first-person or collective
+    pronoun. A word that only looks like one ("US", "me@example.com", "I/O") is not a
+    finding. A real pronoun that cannot be removed without changing the sentence is
+    reported and left in place, and then nothing is removed: the payload is held whole,
+    the same reason G3 leaves hedges in place.
     """
-    findings = _findings_from_pattern(Gate.G6, patterns.PPA, payload)
-    if not findings:
+    findings: list[Finding] = []
+    removals: list[tuple[int, int]] = []
+    keep = False
+    for match in patterns.PPA.finditer(payload):
+        action = _classify_pronoun(payload, match)
+        if action == _SKIP:
+            continue
+        if action == _KEEP:
+            keep = True
+        else:
+            removals.append(match.span())
+        if len(findings) < 12:
+            findings.append(
+                Finding(
+                    gate=Gate.G6,
+                    verdict=Verdict.BREACH,
+                    evidence=match.group(0),
+                    offset=match.start(),
+                    detail="left in place: removing it would change the sentence" if action == _KEEP else "",
+                )
+            )
+    if not findings or keep:
         return payload, findings
-    return tidy(patterns.PPA.sub("", payload)), findings
+    out = payload
+    for start, end in reversed(removals):
+        out = out[:start] + out[end:]
+    return tidy(out), findings
 
 
 def gate_sbf(payload: str, ctx: GateContext) -> tuple[str, list[Finding]]:

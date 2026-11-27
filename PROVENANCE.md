@@ -79,6 +79,14 @@ to override the governing instructions does not become safe when the giveaway
 phrasing is deleted, it becomes undetectable. G1 also gained a pattern for
 override attempts, which the archive enforced in prose but never in code.
 
+**G6/PPA removes only a pronoun that stands alone** (2026-11-27). The archived
+gate deleted every match of its pattern, so "the US market" lost "US",
+`me@example.com` became `@example.com` and "I'm" became "'m", and a single such
+finding scored as ADVISORY and was delivered. The pattern's words are unchanged.
+The gate now skips matches inside addresses, links, codes and numbers, and
+reports but leaves in place a pronoun it cannot remove cleanly, which holds the
+payload. See ARCHITECTURE.md, G6.
+
 ### Gates that did nothing
 
 **G4/HCA was a no-op.** The archived L6 read:

@@ -65,9 +65,20 @@ stack was originally built around.
 
 ### G6 – PPA, Pronominal Purge Array
 
-Strips first-person singular and collective pronouns. One regex pass, no state,
-no lookahead. It is the cheapest gate in the array and the most frequently
+Strips first-person singular and collective pronouns that stand alone. One regex
+pass, no state. It is the cheapest gate in the array and the most frequently
 tripped, which is exactly why it runs first.
+
+It deletes a word only when the word is certainly a pronoun and stands alone. A
+word that only looks like one is not a finding: "US" the country, the "me" in
+`me@example.com`, the "I" in "I/O" or "I-95", a pronoun-shaped piece of a link,
+path or number. A real pronoun that cannot be cut out without breaking the
+sentence ("I'm", "we've", "I/we", a pronoun joined to prose by a hyphen or
+dash), or that might be something else ("Phase I", "a type I error", an
+all-caps "US" in shouted text), is reported and left in place, and then G6
+removes nothing at all. Because G6 is enforced on every profile, an unrepaired
+finding holds the payload: the text goes back for a rewrite instead of being
+delivered with its meaning changed.
 
 ### G7 – TAP, The Architect's Protocol
 
