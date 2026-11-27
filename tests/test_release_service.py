@@ -444,7 +444,47 @@ def test_a_socket_is_not_created_in_an_unsafe_place(tmp_path):
         finally:
             live.close()
     finally:
+        svc.stop()  # it did bind stale.sock; stop() closes that listening socket
         shutil.rmtree(open_dir, ignore_errors=True)
+
+
+def _resource_warnings(action):
+    """Run action, collect every ResourceWarning it causes (a leaked file or socket is reported when collected)."""
+    import gc
+    import warnings
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        action()
+        gc.collect()
+    return [str(w.message) for w in caught if issubclass(w.category, ResourceWarning)]
+
+
+def test_reading_the_credential_closes_the_file(tmp_path):
+    # P10: read_credential used a bare open().read(), leaving the credential file open for the garbage collector.
+    _, delivery = mods()
+    cred = tmp_path / "delivery.cred"
+    cred.write_text("a-long-enough-bearer-token\n")
+    os.chmod(cred, 0o600)
+    got = []
+    assert _resource_warnings(lambda: got.append(delivery.read_credential(str(cred)))) == []
+    assert got == ["a-long-enough-bearer-token"]
+
+
+def test_a_bind_that_fails_part_way_closes_its_socket(tmp_path):
+    # P10: a bind that failed after the socket was created (here: an unknown group) left that socket open.
+    service, _ = mods()
+    s = build(tmp_path)
+    svc = service.ReleaseService(s.tower, policy(service, 1), require_ready=False)
+    safe = Path(tempfile.mkdtemp(dir="/tmp", prefix="zts-safe-"))
+    os.chmod(safe, 0o755)
+    try:
+        def failing_bind():
+            with pytest.raises(LookupError):
+                svc.bind(str(safe / "r.sock"), group="zts-no-such-group-p10")
+        assert _resource_warnings(failing_bind) == []
+        assert svc._server is None, "a failed bind must not leave a half-made listener behind"
+    finally:
+        shutil.rmtree(safe, ignore_errors=True)
 
 
 # ----------------------------------------------------------------------------- configuration

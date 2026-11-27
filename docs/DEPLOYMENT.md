@@ -150,6 +150,8 @@ GRANT SELECT, INSERT, UPDATE ON zts_trust_serial TO zts_release;
 
 ```python
 # verified-snippet
+from pathlib import Path
+
 import enforcer
 
 from zts import DeterministicIntegrityTower, EnforcerReleaseGate
@@ -166,7 +168,7 @@ DSN = "host=db.internal dbname=zts user=zts_release sslmode=verify-full sslrootc
 trust = FileTrustRoot("/etc/zts/trust.json", serial_store=PostgresSerialStore(DSN, create=False))
 replay = PostgresReplayStore(DSN, create=False)
 anchor = Rfc3161Anchor(
-    "https://tsa.example/", [open("/etc/zts/tsa-signing.pem", "rb").read()], "/var/lib/zts/receipts.jsonl",
+    "https://tsa.example/", [Path("/etc/zts/tsa-signing.pem").read_bytes()], "/var/lib/zts/receipts.jsonl",
     timeout=10.0, on_receipt=export_receipt)  # export_receipt(dict) writes outside the ledger writer's reach
 ledger = ValLedger(
     key=load_or_create_ledger_key("/etc/zts/ledger.key"),  # create the file first; do not let it be generated
