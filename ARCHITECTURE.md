@@ -50,12 +50,13 @@ deleted them, which turns a doubt into a claim: "The patient might be allergic
 to penicillin" became "The patient be allergic to penicillin". A hedge is
 load-bearing for the same reason as in G2.
 
-G3 is enforced on every profile, so a hedge on its own holds the payload: the
-text is unchanged and the finding cannot be repaired. If the same pass also
-removed puffery or rewrote a verb, the text did change, and the score decides
-instead. One hedge then scores 95 and passes, so "Honestly the drug might cause
-liver damage" passes while "The drug might cause liver damage" is held. That
-difference is a known gap, recorded in the CARRY report as an open decision.
+G3 is enforced on every profile, so a hedge holds the payload: the finding
+cannot be repaired. It holds even when the same pass also removed puffery or
+rewrote a verb (since P17). Before that, a changed text let the score decide,
+and one hedge scored 95 and passed, so "Honestly the drug might cause liver
+damage" passed while "The drug might cause liver damage" was held. Known cost:
+legitimate uncertainty is held too. Relaxing that is a customer-policy or
+Output Inspector decision, not a change to this word filter.
 
 ### G4 – HCA, Historical Context Anchor
 
