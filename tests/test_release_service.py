@@ -249,9 +249,10 @@ def call(path, raw, *, newline=True, timeout=5, peer_may_hang_up=False):
 def exchange(c, raw, *, newline=True, peer_may_hang_up=False):
     """Send one request on a connected socket and read the one-line answer.
 
-    peer_may_hang_up: the service answers BUSY and closes without reading, so a send that lands after
-    that close fails with a broken pipe while the answer is still there to read. Only a caller that
-    expects that answer (the BUSY probe) sets it; every other call still fails loudly on a broken pipe.
+    peer_may_hang_up: the service answers and closes without reading the rest (BUSY, or TOO_LARGE once
+    the size limit is reached), so a send that lands after that close fails with a broken pipe while the
+    answer is still there to read. Only a caller that expects one of those answers sets it; every other
+    call still fails loudly on a broken pipe.
     """
     try:
         c.sendall(raw + (b"\n" if newline else b""))
@@ -312,7 +313,16 @@ def test_a_request_with_no_newline_and_no_more_data_times_out_and_the_service_ca
 
 def test_a_request_that_never_ends_is_cut_off_at_the_size_limit(running):
     _, _, path, _ = running
-    assert call(path, b"x" * (300 * 1024), newline=False)["reason_code"] == "TOO_LARGE"
+    # The service hangs up once the limit is reached, possibly before this caller has sent everything.
+    assert call(path, b"x" * (300 * 1024), newline=False, peer_may_hang_up=True)["reason_code"] == "TOO_LARGE"
+
+
+def test_a_too_large_answer_is_read_even_when_the_service_hangs_up_mid_send(running):
+    # Regression: under load the size-limit check failed with BrokenPipeError. The service stops reading at
+    # the limit, answers TOO_LARGE and hangs up; whether the caller has finished sending by then is a race on
+    # socket buffer size and scheduling. 2 MiB cannot fit in the buffer, so here that order is forced.
+    _, _, path, _ = running
+    assert call(path, b"x" * (2 * 1024 * 1024), newline=False, peer_may_hang_up=True)["reason_code"] == "TOO_LARGE"
 
 
 def test_when_every_slot_is_busy_a_new_caller_is_told_so_immediately(running):

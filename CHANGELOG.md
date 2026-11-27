@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### The size-limit test reads the answer when the service hangs up mid-send (P18, 2026-11-27)
+
+- Test fix (CARRY roadmap 1.5). `test_a_request_that_never_ends_is_cut_off_at_the_size_limit` failed now and
+  then under load with BrokenPipeError. The service is correct: it stops reading at the limit, answers
+  TOO_LARGE and hangs up. Whether the test had finished sending 300 KiB by then was a race on socket buffer
+  size and scheduling, and the test treated the expected hang-up as a failure.
+- The test now accepts a hang-up during the send and still requires the TOO_LARGE answer, the same rule the
+  BUSY probe already uses. A new regression test sends 2 MiB, which cannot fit in the socket buffer, so the
+  hang-up mid-send happens every run. No service code changed.
+- Known, not changed here: `examples/release_service/client.py` raises on a broken pipe instead of reading
+  the TOO_LARGE answer for an oversized request.
+- Tests: the new regression test fails on the old helper call (BrokenPipeError) every run. Under CPU load
+  both checks passed 30 of 30 runs.
+
 ### A hedge holds whatever else G3 changed (P17, 2026-11-27)
 
 - Fix (owner decision 1.4, second part = B). The sieve held an enforced finding only when its gate left the
