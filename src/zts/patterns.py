@@ -81,8 +81,26 @@ EMDASH: Final = re.compile(r"—")
 #: Collapse runs of whitespace left behind by substitution.
 WHITESPACE: Final = re.compile(r"\s{2,}")
 
-#: Orphaned punctuation left behind by substitution (" ," / " ." / ",,").
-ORPHAN_PUNCT: Final = re.compile(r"\s+([,.;:!?])")
+#: Whitespace that is not a line break: spaces, tabs and the like. ``\s`` minus every character Python's
+#: ``str.splitlines`` treats as a line boundary.
+_INLINE_SPACE = r"[^\S\n\r\v\f\x1c\x1d\x1e\x85  ]"
+
+#: Orphaned punctuation left behind by substitution (" ," / " ."). Only spaces or tabs are closed up:
+#: a mark is never pulled back across a line break, which would delete the break (P15).
+ORPHAN_PUNCT: Final = re.compile(_INLINE_SPACE + r"+([,.;:!?])")
+
+#: A comma, semicolon or colon stranded right after other punctuation on the same line (". ," / ": ,"),
+#: where a removed phrase used to stand. The stranded mark is dropped (P15).
+STRANDED_AFTER_PUNCT: Final = re.compile(
+    r"([.!?;:,])" + _INLINE_SPACE + r"+[,;:](?=\s|$)"
+)
+
+#: A comma stranded at the start of a line, where a removed phrase opened the line. The comma and the
+#: spaces after it are dropped; indentation is kept. Only a comma followed by whitespace or the end:
+#: ",b,c" (a CSV row) and a "; comment" line are real text, not leftovers (P15).
+STRANDED_LINE_START: Final = re.compile(
+    r"^(" + _INLINE_SPACE + r"*),+(?=\s|$)" + _INLINE_SPACE + r"*", re.MULTILINE
+)
 
 CACHE: Final[dict[str, re.Pattern[str]]] = {
     "PPA": PPA,
@@ -111,4 +129,6 @@ __all__ = [
     "EMDASH",
     "WHITESPACE",
     "ORPHAN_PUNCT",
+    "STRANDED_AFTER_PUNCT",
+    "STRANDED_LINE_START",
 ]

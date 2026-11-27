@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### A removed phrase no longer deletes a line break (P15, 2026-11-27)
+
+- Fix (owner decision 1.3 = A). The cleanup that runs after every gate pulled any punctuation that followed
+  whitespace back onto the previous word, and it counted a line break as whitespace. When a gate removed a
+  phrase that opened a paragraph, the comma after it landed on the paragraph above and the break was lost:
+  "Results are in:\n\nHonestly, the test passed." was delivered as "Results are in:, the test passed." with
+  verdict CLEAN. A CSV row that started with a comma was joined to the line above the same way.
+- Punctuation is now closed up over spaces or tabs only, never across a line break. A comma stranded at the
+  start of a line is dropped (indentation kept), and a comma, semicolon or colon stranded right after other
+  punctuation on the same line (". ,") is dropped. A comma that starts real text (",b,c") and a semicolon or
+  colon at the start of a line ("; a comment") are left alone.
+- Unchanged: "word ," still becomes "word,", ",," becomes ",", a comma, semicolon or colon at the very start
+  of the text is dropped, and the first word of the line keeps its case ("the test passed.").
+- Tests (`tests/test_stranded_punctuation.py`): 38 cases across all four profiles; 30 fail on the old code,
+  and the other 8 pin behavior that must not change.
+
 ### G3's documentation matches its code (P14, 2026-11-27)
 
 - ARCHITECTURE.md said G3 strips hedges, and the README gate table listed G3 as "strip". Since the
