@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### The PostgreSQL stores and the shared HTTPS helper close everything they open (P11, 2026-11-26)
+
+- `PostgresReplayStore.close()` closed only the calling thread's connection. A connection a worker thread had
+  opened stayed open until the garbage collector found it after that thread ended. The store now records every
+  connection it opens, on any thread, and `close()` closes all of them. A connection whose thread has ended is
+  closed the next time the store opens a connection, so short-lived threads cannot pile up open connections.
+  After `close()` the store still works: the next call opens a fresh connection, as before.
+- A store whose constructor refuses its table (a table without its uniqueness constraints) now closes the
+  connection it opened before raising. `PostgresSerialStore` does the same. A connection that is made but cannot
+  be set up (the statement timeout cannot be set) is closed instead of abandoned.
+- Unchanged: failure semantics (any database error is a denial, no retry), the two-constraint check on every
+  consume, pruning, and what `describe()` and `health()` report. `close()` should still be called only once
+  releases have finished; a release still using a connection that `close()` closes fails, and that is a denial.
+- `src/zts/_http.py` (`bounded_post`, used by the status client, the timestamp client and the receipt exporter):
+  the response object is now closed on every way out. When a server answers with a closing connection,
+  `http.client` hands the socket to the response, so closing the connection alone left that socket open on a
+  refused answer (too large, or not 200).
+- Regression tests: `tests/test_replay_postgres.py` (six, closing section) and the new
+  `tests/test_http_bounded.py` (refused answers over HTTP and HTTPS). The four replay-store leak tests and the four
+  refused-answer tests fail on the old code; the other two cover a close that itself fails and a serial store
+  that cannot create its table. `tests/cleanup_kit.py` gains `resource_warnings()`, which collects the
+  ResourceWarnings an action causes.
+- Full run with every ResourceWarning shown, on top of P9 and P10: no report remains, from any source.
+
 ### The example release service closes what it opens (P10, 2026-11-26)
 
 - `examples/release_service/delivery.py`: `read_credential` read the bearer credential with a bare `open().read()`,

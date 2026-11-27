@@ -31,3 +31,15 @@ def close_all() -> None:
 
 def still_open() -> int:
     return len(_open)
+
+
+def resource_warnings(action: Any) -> list[str]:
+    """Run action and return every ResourceWarning it causes, including ones reported when objects are collected."""
+    import gc
+    import warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        action()
+        gc.collect()
+    return [str(w.message) for w in caught if issubclass(w.category, ResourceWarning)]

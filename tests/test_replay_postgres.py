@@ -15,10 +15,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from cleanup_kit import closed_after_test
+from cleanup_kit import closed_after_test, resource_warnings
 from pg_kit import cluster  # noqa: F401  (session fixture)
 from release_kit import TEXT, assert_not_released, build, request, run, static_grant
-from zts.replay_postgres import PostgresReplayStore, ReplayStoreError
+from zts.replay_postgres import PostgresReplayStore, PostgresSerialStore, ReplayStoreError
 
 
 @pytest.fixture
@@ -155,6 +155,106 @@ def test_exactly_one_of_dsn_or_connect_is_required(cluster):
         PostgresReplayStore()
     with pytest.raises(ValueError):
         PostgresReplayStore(cluster.dsn, connect=lambda: None)
+
+
+# ---------------------------------------------------------------- closing (P11)
+
+
+def _connection_from_a_thread(store):
+    """Make the store open a connection on a worker thread, and return that connection."""
+    got = []
+
+    def work():
+        store.health()
+        got.append(store._local.conn)
+
+    t = threading.Thread(target=work)
+    t.start()
+    t.join()
+    return got[0]
+
+
+def test_close_closes_the_connections_other_threads_opened(store):
+    # Before P11, close() closed only the calling thread's connection; a worker's stayed open until collected.
+    worker_conn = _connection_from_a_thread(store)
+    assert store.health() is True  # and one on this thread
+    main_conn = store._local.conn
+    store.close()
+    assert worker_conn.closed and main_conn.closed
+    assert store.consume("iss", "after", "r-after") is True, "the store still works: the next call reconnects"
+
+
+def test_a_connection_whose_thread_ended_is_closed_when_the_store_next_connects(store):
+    worker_conn = _connection_from_a_thread(store)
+    assert not worker_conn.closed, "its thread has ended, but nothing has asked the store for a connection yet"
+    _connection_from_a_thread(store)  # a new thread connects: the store closes the one left behind
+    assert worker_conn.closed
+
+
+def test_a_store_that_refuses_its_table_leaves_no_connection_open(cluster, table):
+    # Before P11, the refused store's connection was left for the garbage collector to find.
+    import psycopg
+    with psycopg.connect(cluster.dsn, autocommit=True) as c:
+        c.execute(f"CREATE TABLE {table} (issuer_id text, nonce text, request_id text, "
+                  "consumed_at timestamptz, expires_at timestamptz)")
+
+    def refused():
+        with pytest.raises(ReplayStoreError, match="without its uniqueness constraints"):
+            PostgresReplayStore(cluster.dsn, table=table)
+
+    assert resource_warnings(refused) == []
+
+
+class _HalfReadyConnection:
+    """Connects, then fails the first statement (setting the statement timeout)."""
+
+    def __init__(self):
+        self.closed, self.autocommit = False, False
+
+    def execute(self, *a, **k):
+        raise RuntimeError("the server went away")
+
+    def close(self):
+        self.closed = True
+
+
+def test_a_connection_that_cannot_be_set_up_is_closed_not_abandoned():
+    made = []
+    store = PostgresReplayStore(connect=lambda: made.append(_HalfReadyConnection()) or made[-1], create=False)
+    with pytest.raises(ReplayStoreError, match="cannot connect"):
+        store.consume("iss", "n", "r")
+    assert made and all(c.closed for c in made)
+
+
+def test_a_connection_that_fails_to_close_does_not_hide_the_real_error():
+    class StuckClose(_HalfReadyConnection):
+        def close(self):
+            raise OSError("already gone")
+
+    store = PostgresReplayStore(connect=StuckClose, create=False)
+    with pytest.raises(ReplayStoreError, match="cannot connect"):
+        store.consume("iss", "n", "r")
+
+
+class _NoCreateConnection(_HalfReadyConnection):
+    """Sets up, then refuses to create a table."""
+
+    def execute(self, sql, *a, **k):
+        if sql.startswith("CREATE"):
+            raise RuntimeError("permission denied")
+
+    def transaction(self):
+        import contextlib
+        return contextlib.nullcontext()
+
+
+def test_a_serial_store_that_cannot_create_its_table_leaves_no_connection_open():
+    from zts.trust import TrustRootError
+
+    made = []
+    with pytest.raises(TrustRootError, match="cannot create"):
+        PostgresSerialStore(connect=lambda: made.append(_NoCreateConnection()) or made[-1])
+    assert made and all(c.closed for c in made)
 
 
 # ----------------------------------------- the multi-host attack through full towers
