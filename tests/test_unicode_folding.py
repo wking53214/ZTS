@@ -86,6 +86,25 @@ class TestDeliveredText:
         out = ZeroTrustSieve("ops").run(f"Disk at 94%.{gap}Node 3 down.").payload_out
         assert out == "Disk at 94%.\n\nNode 3 down."
 
+    # P12 (owner decision 2026-11-26): a single line break with spaces or tabs beside it, or a Windows CR LF,
+    # is kept as one line break. Before, it became a space, while a bare line break was kept.
+    @pytest.mark.parametrize("gap", [" \n", "\n\t", "\t\n ", "\r\n", " \r\n", "\u00a0\n"],
+                             ids=["space-before", "tab-after", "both-sides", "crlf", "space-crlf", "nbsp-before"])
+    def test_a_single_line_break_with_whitespace_beside_it_is_kept_as_one_line_break(self, gap):
+        out = ZeroTrustSieve("ops").run(f"Disk at 94%.{gap}Node 3 down.").payload_out
+        assert out == "Disk at 94%.\nNode 3 down."
+
+    def test_the_tower_delivers_the_single_line_break(self):
+        from zts.capstone import ArchitectsProtocol, ReleaseMode
+        from zts.tower import DeterministicIntegrityTower
+
+        result = DeterministicIntegrityTower("ops", capstone=ArchitectsProtocol(ReleaseMode.AUTO)).enforce(
+            "Disk at 94%. \r\nNode 3 down.")
+        assert result.released and result.output == "Disk at 94%.\nNode 3 down."
+
+    def test_a_single_line_break_does_not_hide_a_phrase_from_the_gates(self):
+        assert Gate.G1 in gates_hit("logic > \n meaning")
+
     @pytest.mark.parametrize("gap", ["  ", "\t\t", " \t ", "  "])
     def test_other_runs_of_whitespace_still_become_one_space(self, gap):
         out = ZeroTrustSieve("ops").run(f"Disk at 94%.{gap}Node 3 down.").payload_out
