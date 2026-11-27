@@ -74,6 +74,7 @@ def bounded_post(
     watchdog = threading.Timer(timeout, abort)
     watchdog.daemon = True
     watchdog.start()
+    response: http.client.HTTPResponse | None = None
     try:
         conn.request("POST", parts.path or "/", body=body, headers=headers)
         response = conn.getresponse()
@@ -91,6 +92,11 @@ def bounded_post(
     finally:
         finished.set()
         watchdog.cancel()
+        if response is not None:
+            try:
+                response.close()  # it holds its own reference to the socket; conn.close() alone leaves that open
+            except OSError:
+                pass  # the watchdog may already have closed the socket under it
         conn.close()
     if len(data) > max_bytes:
         raise HttpFailure(f"the {response_noun} is too large")

@@ -61,6 +61,13 @@ class ReplayStoreError(RuntimeError):
     """The replay store could not be reached or did not answer. Enforcer treats it as a denial."""
 
 
+def _close_quietly(conn: Any) -> None:
+    try:
+        conn.close()
+    except Exception:  # nosec B110
+        pass  # closing a dead connection may fail; nothing depends on it
+
+
 def _psycopg() -> Any:
     try:
         import psycopg
@@ -70,7 +77,13 @@ def _psycopg() -> Any:
 
 
 class PostgresReplayStore:
-    """Enforcer ``ReplayStore`` over PostgreSQL. One connection per thread, autocommit."""
+    """Enforcer ``ReplayStore`` over PostgreSQL. One connection per thread, autocommit.
+
+    ``close()`` closes every connection the store opened, on every thread. A connection whose thread has
+    ended is closed the next time the store opens a connection, so short-lived threads do not pile up
+    open connections. Call ``close()`` only once releases have finished (the tower's own close waits for
+    them): a release still using a connection it closes fails, and a failure is a denial.
+    """
 
     durable = True
     shared = True
@@ -93,8 +106,14 @@ class PostgresReplayStore:
         self._dsn, self._connect_fn, self._table = dsn, connect, table
         self._timeout_ms = int(statement_timeout * 1000)
         self._local = threading.local()
+        self._open_lock = threading.Lock()
+        self._open: list[tuple[threading.Thread, Any]] = []  # every connection still open, and its thread
         if create:
-            self.ensure_schema()
+            try:
+                self.ensure_schema()
+            except BaseException:
+                self.close()  # a store that refuses to be built must not keep the connection it opened
+                raise
 
     # ------------------------------------------------------------------ connections
 
@@ -103,27 +122,41 @@ class PostgresReplayStore:
         if conn is not None and not conn.closed:
             return conn
         psycopg = _psycopg()
+        conn = None
         try:
             conn = self._connect_fn() if self._connect_fn else psycopg.connect(
                 self._dsn, autocommit=True, connect_timeout=max(1, self._timeout_ms // 1000))
             conn.autocommit = True
             conn.execute(f"SET statement_timeout = {self._timeout_ms}")
         except Exception as exc:
+            if conn is not None:
+                _close_quietly(conn)  # connected, but could not be set up: do not leave it open
             raise ReplayStoreError(f"cannot connect to the replay database: {type(exc).__name__}") from None
         self._local.conn = conn
+        with self._open_lock:
+            ended = [c for t, c in self._open if not t.is_alive()]
+            self._open = [(t, c) for t, c in self._open if t.is_alive()]
+            self._open.append((threading.current_thread(), conn))
+        for old in ended:
+            _close_quietly(old)  # its thread is gone, so nothing can be using it
         return conn
 
     def _drop(self) -> None:
+        """Close this thread's connection."""
         conn = getattr(self._local, "conn", None)
         self._local.conn = None
         if conn is not None:
-            try:
-                conn.close()
-            except Exception:  # nosec B110
-                pass  # closing a dead connection may fail; nothing depends on it
+            with self._open_lock:
+                self._open = [(t, c) for t, c in self._open if c is not conn]
+            _close_quietly(conn)
 
     def close(self) -> None:
-        self._drop()
+        """Close every connection this store opened, on every thread. A later call opens a fresh one."""
+        self._local.conn = None
+        with self._open_lock:
+            conns, self._open = [c for _, c in self._open], []
+        for conn in conns:
+            _close_quietly(conn)
 
     # ---------------------------------------------------------------------- schema
 
@@ -255,7 +288,11 @@ class PostgresSerialStore:
         # Reuses the replay store's connection handling; its own table is never touched (create=False).
         self._pg = PostgresReplayStore(dsn, connect=connect, statement_timeout=statement_timeout, create=False)
         if create:
-            self.ensure_schema()
+            try:
+                self.ensure_schema()
+            except BaseException:
+                self.close()  # a store that refuses to be built must not keep the connection it opened
+                raise
 
     def ensure_schema(self) -> None:
         from .trust import TrustRootError
