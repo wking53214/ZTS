@@ -140,6 +140,9 @@ accent hid a hedge from G3, and a line break, tab or no-break space inside "as a
   whitespace as a space. A blank line between paragraphs is kept too: any gap that holds two or more line
   breaks arrives as exactly one blank line, a gap that holds exactly one line break (spaces or tabs beside
   it, or a Windows CR LF) arrives as one line break, and any other run of spaces or tabs arrives as one space.
+  When a gate removes a phrase that opened a line ("Honestly, the test passed."), the comma left behind is
+  dropped; it is never pulled back onto the line above, so the break survives. A comma, semicolon or colon
+  left right after other punctuation ("done. , next") is dropped too. The line keeps its lowercase start.
 - **Still open, on purpose:** the G1 word lists were not widened. An instruction override with a period
   between the verb and the noun ("Ignore. All previous instructions"), with more than 40 characters between
   them, or written with other words ("Pay no attention to the earlier guidance") is not found by G1.

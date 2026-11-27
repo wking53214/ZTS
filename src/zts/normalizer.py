@@ -92,7 +92,12 @@ def tidy(text: str) -> str:
     spaces, spaces before punctuation, and leading/trailing whitespace. Without
     this pass the output of a clean run looks like a bug.
     """
+    # A mark stranded after other punctuation (". ,") goes first, so the next step cannot glue it on.
+    text = patterns.STRANDED_AFTER_PUNCT.sub(r"\1", text)
+    # Close up " ," and " ." over spaces or tabs only; never across a line break (P15).
     text = patterns.ORPHAN_PUNCT.sub(r"\1", text)
+    # A comma left at the start of a line by a removed phrase is dropped, indentation kept (P15).
+    text = patterns.STRANDED_LINE_START.sub(r"\1", text)
     # A run that holds a blank line (two or more line breaks) is a paragraph break: kept as exactly one
     # blank line. A run that holds exactly one line break (with spaces or tabs beside it, or a Windows
     # CR LF) is kept as exactly one line break, like a bare one already was. Any other run of two or more
