@@ -238,8 +238,9 @@ Worth stating, because the corrections above are longer than the credits.
 - **Cost-ordered short-circuit evaluation on a filter chain.** Standard
   practice in query planners and packet filters, correctly applied here, and
   measurably right in the mode where it applies.
-- **Deterministic filters over prompt instructions.** A regex that removes
-  hedges is not a request the model can decline. This is the load-bearing
+- **Deterministic filters over prompt instructions.** A regex that catches
+  hedges is not a request the model can decline (the archive's regex removed
+  them; since 2026-11-19 G3 reports them instead). This is the load-bearing
   insight and it holds.
 - **Decoupling pacing from validation.** Independent work should not be
   serialized.

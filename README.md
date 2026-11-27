@@ -376,7 +376,7 @@ zts scrub --strict "..." || echo "breached" # exit 1 on breach, for CI
 |------|------|------|------|--------|
 | G1 | AB | Axiomatic Base | lexical | detect only |
 | G2 | SCF | Semantic Contamination Filter | semantic | detect only |
-| G3 | SBF | Syntactic Breach Filter | syntactic | strip |
+| G3 | SBF | Syntactic Breach Filter | syntactic | report hedges; strip puffery |
 | G4 | HCA | Historical Context Anchor | semantic | detect only |
 | G5 | SND | Sycophancy Neutralization Deck | lexical | strip |
 | G6 | PPA | Pronominal Purge Array | syntactic | strip; hold when a cut would change meaning |

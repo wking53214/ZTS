@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### G3's documentation matches its code (P14, 2026-11-27)
+
+- ARCHITECTURE.md said G3 strips hedges, and the README gate table listed G3 as "strip". Since the
+  2026-11-19 fix (PR #43) the code reports a hedge and leaves it in place, and removes only puffery. The G3 section now says
+  that, explains why (deleting "might" turns a doubt into a claim), and records one known gap: a hedge alone
+  holds the payload, but when G3 also removed puffery or rewrote a verb in the same pass, the score decides and
+  one hedge passes. The design thesis in ARCHITECTURE.md and PROVENANCE.md now says a regex "catches" hedges.
+- Documentation only; no code changed. Tests (`tests/test_architecture_doc.py`): 6 checks, 4 of which fail on the
+  old wording; the other 2 pin the behavior the text promises.
+
 ### G6 stops changing meaning (P13, 2026-11-27)
 
 - Critical fix. G6 deleted every match of its pronoun pattern, including words that are not pronouns and
