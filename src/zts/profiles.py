@@ -55,12 +55,14 @@ _ANTI_SYCOPHANCY = {Gate.G5}
 _SEMANTIC = {Gate.G2, Gate.G4}
 _AXIOMATIC = {Gate.G1}
 
-#: Baseline. Blocks identity and hedging; everything else is advisory.
+#: Baseline. Blocks instruction overrides, identity and hedging; G2 and G4 are advisory.
+#: G1 is enforced here (P16): the profile a caller gets without choosing must not release a live
+#: override attempt. A quoted override phrase is held too until spans can be marked untrusted.
 DEFAULT = Profile(
     name="default",
     threshold=88,
-    enforced=frozenset(_SYNTACTIC | _ANTI_SYCOPHANCY),
-    advisory=frozenset(_AXIOMATIC | _SEMANTIC),
+    enforced=frozenset(_SYNTACTIC | _ANTI_SYCOPHANCY | _AXIOMATIC),
+    advisory=frozenset(_SEMANTIC),
 )
 
 #: Operational reporting. Adds causal grounding and history anchoring.
@@ -77,8 +79,8 @@ OPS = Profile(
 EXEC = Profile(
     name="exec",
     threshold=85,
-    enforced=frozenset(_SYNTACTIC | _ANTI_SYCOPHANCY),
-    advisory=frozenset(_AXIOMATIC | _SEMANTIC),
+    enforced=frozenset(_SYNTACTIC | _ANTI_SYCOPHANCY | _AXIOMATIC),
+    advisory=frozenset(_SEMANTIC),
     passive_review=True,
 )
 

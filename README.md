@@ -122,8 +122,10 @@ Two limits of the filters were found on 2026-11-18 (EXECUTED) and fixed on 2026-
   only of lookalikes (a lone Greek capital iota for "I") is not folded, and the word lists are still fixed English.
   Flattery outside the ten listed phrases is not seen: "Great question! You're absolutely right." audits `clean`.
   The returned text no longer contains the invisible characters.
-- **In the `default` and `exec` profiles the instruction-override gate (G1) is advisory.** It records a finding
-  and does not block (see "Profiles").
+- **The instruction-override gate (G1) holds the payload on every profile** (since P16; it was advisory on
+  `default` and `exec`). Accepted cost: G1 cannot yet tell a quoted override phrase from a live one, so a
+  report that quotes "ignore all previous instructions" is held too, until retrieved text can be marked
+  untrusted.
 
 More bypasses were found on 2026-11-25 (EXECUTED at `9784786`, ops profile) and fixed the same day:
 fullwidth letters hid a word from G1, G3 and G6 completely, mathematical letters hid it from G6, a combining
@@ -395,9 +397,9 @@ one is configured. Production uses the Enforcer gate; the legacy `AUTO`,
 
 | Profile | Threshold | Enforced | Advisory |
 |---------|-----------|----------|----------|
-| `default` | 88 | G3 G5 G6 | G1 G2 G4 |
+| `default` | 88 | G1 G3 G5 G6 | G2 G4 |
 | `ops` | 90 | all | – |
-| `exec` | 85 | G3 G5 G6 | G1 G2 G4 |
+| `exec` | 85 | G1 G3 G5 G6 | G2 G4 |
 | `legal` | 97 | all | – |
 
 An advisory gate still records its findings. A profile that declines to block
