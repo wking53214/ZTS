@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### A hedge holds whatever else G3 changed (P17, 2026-11-27)
+
+- Fix (owner decision 1.4, second part = B). The sieve held an enforced finding only when its gate left the
+  text unchanged. G3 reports a hedge and leaves it in place, but also removes puffery and rewrites abstract
+  verbs; when it did, the score decided and one hedge passed. "The drug might cause liver damage." was held on
+  every profile while "Honestly the drug might cause liver damage." passed as ADVISORY on default, ops and exec.
+- An enforced G3 finding now holds the payload even when the same pass changed other words. The hedge stays in
+  the delivered text, puffery alone is still removed and does not hold, and no other gate's rule changed.
+- Known cost, recorded as a follow-up: legitimate uncertainty is still held. Relaxing it belongs to customer
+  policy or the Output Inspector. ARCHITECTURE.md updated.
+- Tests (`tests/test_g3_hedge_holds.py`): 37 cases across all four profiles; 15 fail on the old code, and the
+  other 22 pin behavior that must not change.
+
 ### G1 holds an override attempt on every profile (P16, 2026-11-27)
 
 - Behavior change (owner decision 1.4, first part = A). G1 was advisory on `default` and `exec`:

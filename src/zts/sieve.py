@@ -586,7 +586,13 @@ class ZeroTrustSieve:
         verdict = _overall(all_findings, score, self.profile, breached_at)
         # An enforced finding the gate could not repair is still in the
         # payload. The score does not outweigh it; the payload is held.
-        if any(r.verdict is Verdict.BREACH and not r.mutated for r in results):
+        # G3 never repairs what it reports (a hedge is left in place), so its
+        # enforced findings hold even when the same pass removed puffery or
+        # rewrote a verb (P17).
+        if any(
+            r.verdict is Verdict.BREACH and (not r.mutated or r.gate in _LEFT_IN_PLACE)
+            for r in results
+        ):
             verdict = Verdict.BREACH
         # Leakage applies to every profile and holds the payload at any score.
         if any(f.code in BLOCKING_CODES for f in leaks):
@@ -605,6 +611,11 @@ class ZeroTrustSieve:
             elapsed_ns=time.perf_counter_ns() - started,
             flags=flags,
         )
+
+
+#: Gates whose findings are reported and left in the text, even when the gate changes
+#: other words in the same pass. G3 reports hedges but removes puffery (P17).
+_LEFT_IN_PLACE: frozenset[Gate] = frozenset({Gate.G3})
 
 
 def _is_terminal(gate: Gate) -> bool:
