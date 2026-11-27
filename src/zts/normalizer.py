@@ -77,7 +77,12 @@ class StructureNormalizer:
 
 
 def _collapse_run(match: re.Match[str]) -> str:
-    return "\n\n" if match.group().count("\n") >= 2 else " "
+    breaks = match.group().count("\n")
+    if breaks >= 2:
+        return "\n\n"  # a paragraph break (P7)
+    if breaks == 1:
+        return "\n"  # a single line break, with the spaces or tabs around it dropped (P12)
+    return " "
 
 
 def tidy(text: str) -> str:
@@ -89,7 +94,9 @@ def tidy(text: str) -> str:
     """
     text = patterns.ORPHAN_PUNCT.sub(r"\1", text)
     # A run that holds a blank line (two or more line breaks) is a paragraph break: kept as exactly one
-    # blank line. Any other run of two or more whitespace characters becomes one space, as before.
+    # blank line. A run that holds exactly one line break (with spaces or tabs beside it, or a Windows
+    # CR LF) is kept as exactly one line break, like a bare one already was. Any other run of two or more
+    # whitespace characters becomes one space, as before.
     text = patterns.WHITESPACE.sub(_collapse_run, text)
     text = re.sub(r"([,;:])\1+", r"\1", text)
     text = re.sub(r"^[\s,;:]+", "", text)

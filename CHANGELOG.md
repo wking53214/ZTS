@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### A single line break is kept in delivered text (P12, 2026-11-26)
+
+- Owner decision. `tidy` in `src/zts/normalizer.py` kept a bare single line break, but turned the same break
+  into a space when a space or tab sat next to it, and turned a Windows CR LF into a space, so two lines ran
+  together. A whitespace run that holds exactly one line break now arrives as exactly one line break
+  (`"end. \nNext"` and `"end.\r\nNext"` arrive as `"end.\nNext"`). Paragraph breaks (P7) and other runs of
+  spaces or tabs (one space) are unchanged.
+- This changes delivered text, and so the ledger's output digest, only for text that contains such a break.
+  Records already in a ledger still verify. Gate matching is unchanged: inside a phrase the gates still match
+  any run of whitespace as a space.
+- Tests (`tests/test_unicode_folding.py`): six gap shapes through the sieve and one through the tower fail on
+  the old code; a check that such a break still cannot hide a phrase from the gates passes on both. README
+  updated to match.
+
 ### The PostgreSQL stores and the shared HTTPS helper close everything they open (P11, 2026-11-26)
 
 - `PostgresReplayStore.close()` closed only the calling thread's connection. A connection a worker thread had
