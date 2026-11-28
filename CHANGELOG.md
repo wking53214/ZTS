@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### The CNS pin moves to v4.2.0 (P19, 2026-11-27)
+
+- Pin only (CARRY roadmap 1.6). The `cns` extra and the `production` extra pin CNS `v4.2.0` (`670246f`) instead of
+  `v4.1.0`. CNS 4.2.0 adds one optional field to the seat `Evidence` record; ZTS uses only `cns.__version__`,
+  `cns.gate.subject_digest` and `cns.governance.IdentityContext`, which are the same in both. The dock already
+  accepts major 4. The notes that name the pin (README, `src/zts/cns/adapter.py`, the `cns-3` job comment,
+  `docs/RELEASE_BOUNDARY.md`) and the pin test in `tests/test_cns_independence.py` name `v4.2.0`.
+- The `cns-3` job is unchanged: it still installs CNS 3.0.0 over the pin to hold the dock's acceptance of major 3.
+- Tests: the coverage job's settings, with every extra and every REQUIRE flag, ran 1,787 passed, 0 skipped,
+  coverage 94.56%, the same as before. With CNS 3.0.0 over the pin: 1,786 passed, 1 skipped, the same skip as on
+  main. With the old pyproject, the pin tests fail (2 failed). mypy clean.
+
 ### The size-limit test reads the answer when the service hangs up mid-send (P18, 2026-11-27)
 
 - Test fix (CARRY roadmap 1.5). `test_a_request_that_never_ends_is_cut_off_at_the_size_limit` failed now and
